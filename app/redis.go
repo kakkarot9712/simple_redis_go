@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type protospecs string
@@ -37,6 +38,14 @@ const (
 	SET         command = "set"
 	GET         command = "get"
 )
+
+type miliseconds uint64
+
+type Value struct {
+	Data      string
+	Exp       miliseconds
+	UpdatedAt time.Duration
+}
 
 var SupportedCommands = []command{PING, ECHO, SET, GET}
 

@@ -5,12 +5,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 func handleConn(conn net.Conn) {
 	defer conn.Close()
-	store := map[string]string{}
+	store := map[string]Value{}
 	for {
 		resp := make([]byte, 500)
 		n, err := conn.Read(resp)
@@ -32,13 +34,40 @@ func handleConn(conn net.Conn) {
 				conn.Write(Encode([]byte(msg), BULK_STRING))
 			case SET:
 				key := args[0]
-				val := args[1]
+				val := Value{}
+				withPxArg := false
+				if strings.ToLower(args[len(args)-2]) == "px" {
+					exp, err := strconv.Atoi(args[len(args)-1])
+					if err == nil {
+						val.Exp = miliseconds(exp)
+						val.Data = strings.Join(args[1:len(args)-2], " ")
+						val.UpdatedAt = time.Duration(time.Now().UnixMilli())
+						withPxArg = true
+					}
+				}
+				if !withPxArg {
+					val.Data = strings.Join(args[1:], " ")
+				}
 				store[key] = val
 				conn.Write(Encode([]byte("OK"), SIMPLE_STRING))
 			case GET:
 				key := args[0]
 				val := store[key]
-				conn.Write(Encode([]byte(val), BULK_STRING))
+				exp := val.Exp
+				updatedAt := val.UpdatedAt
+
+				if exp == 0 {
+					conn.Write(Encode([]byte(val.Data), BULK_STRING))
+				} else {
+					currentTime := time.Now().UnixMilli()
+					expTime := updatedAt + time.Duration(exp)
+					if currentTime > int64(expTime) {
+						delete(store, key)
+						conn.Write(Encode([]byte(""), BULK_STRING))
+					} else {
+						conn.Write(Encode([]byte(val.Data), BULK_STRING))
+					}
+				}
 			default:
 				conn.Write(Encode([]byte("USPCMD"), SIMPLE_STRING))
 			}
