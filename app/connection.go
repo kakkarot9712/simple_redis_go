@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -10,7 +11,7 @@ import (
 	"time"
 )
 
-func handleConn(conn net.Conn) {
+func handleConn(conn net.Conn, currentConfig *map[config]string) {
 	defer conn.Close()
 	store := map[string]Value{}
 	for {
@@ -28,10 +29,10 @@ func handleConn(conn net.Conn) {
 			cmd, args := ParseCommand(resp)
 			switch cmd {
 			case PING:
-				conn.Write(Encode([]byte("PONG"), SIMPLE_STRING))
+				conn.Write(Encode("PONG", SIMPLE_STRING))
 			case ECHO:
 				msg := strings.Join(args, " ")
-				conn.Write(Encode([]byte(msg), BULK_STRING))
+				conn.Write(Encode(msg, BULK_STRING))
 			case SET:
 				key := args[0]
 				val := Value{}
@@ -49,7 +50,7 @@ func handleConn(conn net.Conn) {
 					val.Data = strings.Join(args[1:], " ")
 				}
 				store[key] = val
-				conn.Write(Encode([]byte("OK"), SIMPLE_STRING))
+				conn.Write(Encode("OK", SIMPLE_STRING))
 			case GET:
 				key := args[0]
 				val := store[key]
@@ -57,19 +58,36 @@ func handleConn(conn net.Conn) {
 				updatedAt := val.UpdatedAt
 
 				if exp == 0 {
-					conn.Write(Encode([]byte(val.Data), BULK_STRING))
+					conn.Write(Encode(val.Data, BULK_STRING))
 				} else {
 					currentTime := time.Now().UnixMilli()
 					expTime := updatedAt + time.Duration(exp)
 					if currentTime > int64(expTime) {
 						delete(store, key)
-						conn.Write(Encode([]byte(""), BULK_STRING))
+						conn.Write(Encode("", BULK_STRING))
 					} else {
-						conn.Write(Encode([]byte(val.Data), BULK_STRING))
+						conn.Write(Encode(val.Data, BULK_STRING))
 					}
 				}
+			case CONFIG:
+				if len(args) == 0 {
+					log.Fatal("arg required with config!")
+				}
+				subcmd := strings.ToLower(args[0])
+				if subcmd == "get" {
+					if len(args) < 2 {
+						log.Fatal("config name is required with config get!")
+					}
+					configName := args[1]
+					configVal := (*currentConfig)[config(configName)]
+					if configVal == "" {
+						log.Fatal("inavlid config name passed")
+					}
+					data := Encode([]string{configName, configVal}, ARRAYS)
+					conn.Write(data)
+				}
 			default:
-				conn.Write(Encode([]byte("USPCMD"), SIMPLE_STRING))
+				conn.Write(Encode("", BULK_STRING))
 			}
 		}
 	}

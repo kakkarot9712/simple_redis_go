@@ -37,6 +37,14 @@ const (
 	ECHO        command = "echo"
 	SET         command = "set"
 	GET         command = "get"
+	CONFIG      command = "config"
+)
+
+type config string
+
+const (
+	DIR        = "dir"
+	DBFILENAME = "dbfilename"
 )
 
 type miliseconds uint64
@@ -47,7 +55,7 @@ type Value struct {
 	UpdatedAt time.Duration
 }
 
-var SupportedCommands = []command{PING, ECHO, SET, GET}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG}
 
 func ParseCommand(buffer []byte) (command, []string) {
 	data := Decode(buffer)
@@ -63,15 +71,34 @@ func ParseCommand(buffer []byte) (command, []string) {
 	}
 }
 
-func Encode(dec []byte, spec protospecs) []byte {
+func Encode(dec any, spec protospecs) []byte {
 	switch spec {
 	case BULK_STRING:
-		if string(dec) == "" {
+		decstr, ok := dec.(string)
+		if !ok {
+			log.Fatalf("Invalid dec passed! expected string got %T", decstr)
+		}
+		if dec == "" {
 			return []byte(string(BULK_STRING) + "-1" + "\r\n")
 		}
-		return []byte(string(BULK_STRING) + strconv.Itoa(len(dec)) + "\r\n" + string(dec) + "\r\n")
+		return []byte(string(BULK_STRING) + strconv.Itoa(len(decstr)) + "\r\n" + decstr + "\r\n")
 	case SIMPLE_STRING:
-		return []byte(string(SIMPLE_STRING) + string(dec) + "\r\n")
+		decstr, ok := dec.(string)
+		if !ok {
+			log.Fatalf("Invalid dec passed! expected string got %T", dec)
+		}
+		return []byte(string(SIMPLE_STRING) + decstr + "\r\n")
+	case ARRAYS:
+		decarr, ok := dec.([]string)
+		if !ok {
+			log.Fatalf("Invalid dec passed! expected array of strings got %T", dec)
+		}
+		enc := string(ARRAYS) + strconv.Itoa(len(decarr)) + "\r\n"
+		for _, d := range decarr {
+			encBS := Encode(d, BULK_STRING)
+			enc += string(encBS)
+		}
+		return []byte(enc)
 	default:
 		log.Fatal("Yet to implement!")
 	}
