@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func handleConn(conn net.Conn, currentConfig *map[config]string) {
+func handleConn(conn net.Conn, currentConfig *map[config]string, storedKeys *map[string]Value) {
 	defer conn.Close()
 	store := map[string]Value{}
 	for {
@@ -85,6 +85,18 @@ func handleConn(conn net.Conn, currentConfig *map[config]string) {
 					}
 					data := Encode([]string{configName, configVal}, ARRAYS)
 					conn.Write(data)
+				}
+			case KEYS:
+				if len(args) == 0 {
+					log.Fatal("additional arguments required for KEY command")
+				}
+				arg := args[0]
+				if arg == "*" {
+					keys := []string{}
+					for key := range *storedKeys {
+						keys = append(keys, key)
+					}
+					conn.Write(Encode(keys, ARRAYS))
 				}
 			default:
 				conn.Write(Encode("", BULK_STRING))

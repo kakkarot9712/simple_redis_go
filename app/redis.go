@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,6 +42,7 @@ const (
 	SET         command = "set"
 	GET         command = "get"
 	CONFIG      command = "config"
+	KEYS        command = "keys"
 )
 
 type config string
@@ -55,7 +60,94 @@ type Value struct {
 	UpdatedAt time.Duration
 }
 
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG}
+type tablesubsection uint
+
+const (
+	DB_START    tablesubsection = 254
+	DB_METADATA tablesubsection = 250
+)
+
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS}
+
+func loadRedisDB(filepath string, filename string) (storedKeys map[string]Value) {
+	MagicNumber := "REDIS0011"
+	storedKeys = map[string]Value{}
+	buffer, err := os.ReadFile(path.Join(filepath, filename))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Println(err)
+		log.Fatal("Database File Open Failed")
+	}
+	if len(buffer) == 0 {
+		return
+	}
+	if len(buffer) < 9 {
+		log.Fatal("Database corrupted! aborting...")
+	}
+	if string(buffer[:9]) != MagicNumber {
+		log.Fatal("File is not rdb file! aborting...")
+	}
+
+	// TODO: Perform CRC Checksum of whole file
+	crcChecksum := buffer[len(buffer)-8:]
+	fmt.Println(crcChecksum)
+	// Do Meatdata Section Later (FA)
+	// Find Database index directly
+	databaseIndex := bytes.Index(buffer, []byte{254})
+	if databaseIndex == -1 {
+		return
+	}
+
+	// Database Section (FE)
+	database := buffer[databaseIndex:]
+	// index := database[1]
+	keyValNums := 0
+	if database[2] == 251 {
+		keyValNums = int(database[3])
+		expiresNum := uint(database[4])
+		fmt.Println(keyValNums, expiresNum, "KVE")
+	}
+	pointer := 5
+	gotKVp := 0
+	for {
+		b := database[pointer]
+		if b == 0 {
+			// String
+			pointer++
+			keyLength := uint(database[pointer])
+			pointer++
+			key := database[pointer : pointer+int(keyLength)]
+			pointer += int(keyLength)
+			valLen := uint(database[pointer])
+			pointer++
+			val := database[pointer : pointer+int(valLen)]
+			pointer += int(valLen)
+			if database[pointer] == 252 || database[pointer] == 253 {
+				// has expiry in ms
+				// pointer++
+				intLeng := database[pointer+1]
+				// pointer++
+				if database[pointer] == 252 {
+					exp := binary.LittleEndian.Uint64(database[pointer+2 : pointer+2+int(intLeng)])
+					storedKeys[string(key)] = Value{Data: string(val), Exp: miliseconds(exp)}
+				} else {
+					exp := binary.LittleEndian.Uint64(database[pointer+2 : pointer+2+int(intLeng)])
+					storedKeys[string(key)] = Value{Data: string(val), Exp: miliseconds(uint64(exp) * 1000)}
+				}
+				pointer += int(intLeng) + 2
+			} else {
+				storedKeys[string(key)] = Value{Data: string(val)}
+			}
+			gotKVp += 1
+		} else if b == 192 {
+			pointer++ //Just Ignore
+		} else {
+			pointer++
+		}
+		if gotKVp == keyValNums {
+			return
+		}
+	}
+}
 
 func ParseCommand(buffer []byte) (command, []string) {
 	data := Decode(buffer)
