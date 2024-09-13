@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func handleConn(conn net.Conn, currentConfig *map[config]string, storedKeys *map[string]Value) {
+func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[string]Value) {
 	defer conn.Close()
 	store := map[string]Value{}
 	for {
@@ -54,9 +54,11 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, storedKeys *map
 			case GET:
 				key := args[0]
 				val := store[key]
+				if val.Data == "" {
+					val = (*rdbKeys)[key]
+				}
 				exp := val.Exp
 				updatedAt := val.UpdatedAt
-
 				if exp == 0 {
 					conn.Write(Encode(val.Data, BULK_STRING))
 				} else {
@@ -93,7 +95,7 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, storedKeys *map
 				arg := args[0]
 				if arg == "*" {
 					keys := []string{}
-					for key := range *storedKeys {
+					for key := range *rdbKeys {
 						keys = append(keys, key)
 					}
 					conn.Write(Encode(keys, ARRAYS))
