@@ -48,8 +48,9 @@ const (
 type config string
 
 const (
-	DIR        = "dir"
-	DBFILENAME = "dbfilename"
+	DIR        config = "dir"
+	DBFILENAME config = "dbfilename"
+	PORT       config = "port"
 )
 
 type miliseconds uint64
@@ -67,22 +68,39 @@ const (
 )
 
 var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS}
+var SupportedConfigs = []config{DIR, DBFILENAME, PORT}
+
+var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
+
+func proccessArgs() map[config]string {
+	configs := defaultConfig
+	for _, conf := range SupportedConfigs {
+		configVal, found := ParseArg(conf)
+		if found {
+			configs[conf] = configVal
+		}
+	}
+	return configs
+}
 
 func loadRedisDB(filepath string, filename string) map[string]Value {
 	MagicNumber := "REDIS0011"
 	storedKeys := make(map[string]Value)
 	buffer, err := os.ReadFile(path.Join(filepath, filename))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Fatal("Database File Open Failed")
+		fmt.Println("Database File Open Failed! ignoring...")
+		return storedKeys
 	}
 	if len(buffer) == 0 {
 		return storedKeys
 	}
 	if len(buffer) < 9 {
-		log.Fatal("Database corrupted! aborting...")
+		fmt.Println("Database corrupted! ignoring...")
+		return storedKeys
 	}
 	if string(buffer[:9]) != MagicNumber {
-		log.Fatal("File is not rdb file! aborting...")
+		fmt.Println("File is not rdb file! ignoring...")
+		return storedKeys
 	}
 
 	// TODO: Perform CRC Checksum of whole file
@@ -166,7 +184,8 @@ func loadRedisDB(filepath string, filename string) map[string]Value {
 			if gotKVp == keyValNums {
 				return storedKeys
 			} else {
-				log.Fatal("incomplete Data found, number of keys mistmatch")
+				fmt.Println("incomplete Data found, number of keys mistmatch. restore is aborted.")
+				return make(map[string]Value)
 			}
 		}
 	}

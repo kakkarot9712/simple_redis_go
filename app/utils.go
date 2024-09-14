@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"os"
+	"slices"
 	"strconv"
 )
 
@@ -80,4 +82,15 @@ func processPropertyValueForInt(database *[]byte, currentPointer int) (val int, 
 		log.Fatal("pure string not supported")
 		return
 	}
+}
+
+func ParseArg(arg config) (string, bool) {
+	argIndex := slices.Index(os.Args, string("--"+arg))
+	if argIndex == -1 {
+		return "", false
+	}
+	if len(os.Args) < argIndex+2 {
+		panic("--" + arg + " does not have any parameters passed!")
+	}
+	return os.Args[argIndex+1], true
 }

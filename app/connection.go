@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"strconv"
@@ -69,24 +68,24 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 				}
 			case CONFIG:
 				if len(args) == 0 {
-					log.Fatal("arg required with config!")
+					conn.Write(Encode("atleast 1 arg is required for CONFIG command", BULK_STRING))
+					return
 				}
 				subcmd := strings.ToLower(args[0])
 				if subcmd == "get" {
 					if len(args) < 2 {
-						log.Fatal("config name is required with config get!")
+						conn.Write(Encode("name is required for CONFIG GET command", BULK_STRING))
+						return
 					}
 					configName := args[1]
 					configVal := (*currentConfig)[config(configName)]
-					if configVal == "" {
-						log.Fatal("inavlid config name passed")
-					}
 					data := Encode([]string{configName, configVal}, ARRAYS)
 					conn.Write(data)
 				}
 			case KEYS:
 				if len(args) == 0 {
-					log.Fatal("additional arguments required for KEY command")
+					conn.Write(Encode("atleast 1 arg is required for KEY command", BULK_STRING))
+					return
 				}
 				arg := args[0]
 				if arg == "*" {
