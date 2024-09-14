@@ -43,6 +43,7 @@ const (
 	GET         command = "get"
 	CONFIG      command = "config"
 	KEYS        command = "keys"
+	INFO        command = "info"
 )
 
 type config string
@@ -67,7 +68,14 @@ const (
 	DB_METADATA tablesubsection = 250
 )
 
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS}
+type infoSection string
+
+const (
+	REPLICATION infoSection = "replication"
+)
+
+var SupportedInfoSections = []infoSection{REPLICATION}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}

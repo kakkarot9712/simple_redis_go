@@ -95,6 +95,18 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 					}
 					conn.Write(Encode(keys, ARRAYS))
 				}
+			case INFO:
+				if len(args) == 0 {
+					conn.Write(Encode("atleast 1 arg is required for INFO command", BULK_STRING))
+					return
+				}
+				arg := args[0]
+				if arg == string(REPLICATION) {
+					info := []string{"# Replication", "role:master"}
+					conn.Write(Encode(strings.Join(info, "\n"), BULK_STRING))
+				} else {
+					conn.Write(Encode("Only REPLICATION is supported for INFO command", BULK_STRING))
+				}
 			default:
 				conn.Write(Encode("", BULK_STRING))
 			}
