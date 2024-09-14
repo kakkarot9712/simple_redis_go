@@ -55,9 +55,8 @@ const (
 type miliseconds uint64
 
 type Value struct {
-	Data      string
-	Exp       miliseconds
-	UpdatedAt time.Duration
+	Data string
+	Exp  miliseconds
 }
 
 type tablesubsection uint
@@ -69,16 +68,15 @@ const (
 
 var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS}
 
-func loadRedisDB(filepath string, filename string) (storedKeys map[string]Value) {
+func loadRedisDB(filepath string, filename string) map[string]Value {
 	MagicNumber := "REDIS0011"
-	storedKeys = map[string]Value{}
+	storedKeys := make(map[string]Value)
 	buffer, err := os.ReadFile(path.Join(filepath, filename))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Println(err)
 		log.Fatal("Database File Open Failed")
 	}
 	if len(buffer) == 0 {
-		return
+		return storedKeys
 	}
 	if len(buffer) < 9 {
 		log.Fatal("Database corrupted! aborting...")
@@ -88,13 +86,15 @@ func loadRedisDB(filepath string, filename string) (storedKeys map[string]Value)
 	}
 
 	// TODO: Perform CRC Checksum of whole file
-	crcChecksum := buffer[len(buffer)-8:]
-	fmt.Println(crcChecksum)
-	// Do Meatdata Section Later (FA)
+	// crcChecksum := buffer[len(buffer)-8:]
+	// fmt.Println(crcChecksum)
+
+	// TODO: Meatdata Section (FA)
+
 	// Find Database index directly
 	databaseIndex := bytes.Index(buffer, []byte{254})
 	if databaseIndex == -1 {
-		return
+		return storedKeys
 	}
 
 	// Database Section (FE)
@@ -103,48 +103,71 @@ func loadRedisDB(filepath string, filename string) (storedKeys map[string]Value)
 	keyValNums := 0
 	if database[2] == 251 {
 		keyValNums = int(database[3])
-		expiresNum := uint(database[4])
-		fmt.Println(keyValNums, expiresNum, "KVE")
+		// expiresNum := uint(database[4])
 	}
 	pointer := 5
 	gotKVp := 0
+	key := ""
+	val := Value{}
 	for {
 		b := database[pointer]
-		if b == 0 {
+		if database[pointer] == 252 || database[pointer] == 253 {
+			// key Has expiry
+			if database[pointer] == 252 {
+				pointer++
+				exp := binary.LittleEndian.Uint64(database[pointer : pointer+8])
+				val.Exp = miliseconds(exp)
+				pointer += 8
+			} else {
+				pointer++
+				exp := binary.LittleEndian.Uint32(database[pointer : pointer+4])
+				val.Exp = miliseconds(exp * 1000)
+				pointer += 4
+			}
+		} else if b == 0 {
 			// String
 			pointer++
-			keyLength := uint(database[pointer])
-			pointer++
-			key := database[pointer : pointer+int(keyLength)]
-			pointer += int(keyLength)
-			valLen := uint(database[pointer])
-			pointer++
-			val := database[pointer : pointer+int(valLen)]
-			pointer += int(valLen)
-			if database[pointer] == 252 || database[pointer] == 253 {
-				// has expiry in ms
-				// pointer++
-				intLeng := database[pointer+1]
-				// pointer++
-				if database[pointer] == 252 {
-					exp := binary.LittleEndian.Uint64(database[pointer+2 : pointer+2+int(intLeng)])
-					storedKeys[string(key)] = Value{Data: string(val), Exp: miliseconds(exp)}
-				} else {
-					exp := binary.LittleEndian.Uint64(database[pointer+2 : pointer+2+int(intLeng)])
-					storedKeys[string(key)] = Value{Data: string(val), Exp: miliseconds(uint64(exp) * 1000)}
-				}
-				pointer += int(intLeng) + 2
+			keyLengthBits := getOctetFromByte(database[pointer])
+			if keyLengthBits[:2] != "11" {
+				keyLength, newPointer := processPropertyLengthForString(&database, pointer)
+				pointer = newPointer
+				key = string(database[pointer : pointer+int(keyLength)])
+				pointer += int(keyLength)
 			} else {
-				storedKeys[string(key)] = Value{Data: string(val)}
+				keyint, newPointer := processPropertyValueForInt(&database, pointer)
+				key = strconv.Itoa(keyint)
+				pointer = newPointer
 			}
-			gotKVp += 1
-		} else if b == 192 {
-			pointer++ //Just Ignore
+			valLenBits := getOctetFromByte(database[pointer])
+			if valLenBits[:2] != "11" {
+				valLength, newPointer := processPropertyLengthForString(&database, pointer)
+				pointer = newPointer
+				val.Data = string(database[pointer : pointer+valLength])
+				pointer += valLength
+			} else {
+				valInt, newPointer := processPropertyValueForInt(&database, pointer)
+				val.Data = strconv.Itoa(valInt)
+				pointer = newPointer
+			}
+
+			// Omit key-value if it is expired
+			if val.Exp == 0 || val.Exp > miliseconds(time.Now().UnixMilli()) {
+				storedKeys[key] = val
+			} else {
+				fmt.Println("key with name", key, "is ommited as it was expired")
+			}
+			key = ""
+			val = Value{}
+			gotKVp++
 		} else {
 			pointer++
 		}
-		if gotKVp == keyValNums {
-			return
+		if b == byte(0xFF) {
+			if gotKVp == keyValNums {
+				return storedKeys
+			} else {
+				log.Fatal("incomplete Data found, number of keys mistmatch")
+			}
 		}
 	}
 }

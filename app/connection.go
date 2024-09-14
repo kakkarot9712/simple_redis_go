@@ -13,7 +13,7 @@ import (
 
 func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[string]Value) {
 	defer conn.Close()
-	store := map[string]Value{}
+	// store := map[string]Value{}
 	for {
 		resp := make([]byte, 500)
 		n, err := conn.Read(resp)
@@ -40,32 +40,28 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 				if strings.ToLower(args[len(args)-2]) == "px" {
 					exp, err := strconv.Atoi(args[len(args)-1])
 					if err == nil {
-						val.Exp = miliseconds(exp)
+						val.Exp = miliseconds(time.Now().UnixMilli() + int64(exp))
 						val.Data = strings.Join(args[1:len(args)-2], " ")
-						val.UpdatedAt = time.Duration(time.Now().UnixMilli())
+						// val.UpdatedAt = time.Duration(time.Now().UnixMilli())
 						withPxArg = true
 					}
 				}
 				if !withPxArg {
 					val.Data = strings.Join(args[1:], " ")
 				}
-				store[key] = val
+				(*rdbKeys)[key] = val
 				conn.Write(Encode("OK", SIMPLE_STRING))
 			case GET:
 				key := args[0]
-				val := store[key]
-				if val.Data == "" {
-					val = (*rdbKeys)[key]
-				}
+				val := (*rdbKeys)[key]
 				exp := val.Exp
-				updatedAt := val.UpdatedAt
+				// updatedAt := val.UpdatedAt
 				if exp == 0 {
 					conn.Write(Encode(val.Data, BULK_STRING))
 				} else {
 					currentTime := time.Now().UnixMilli()
-					expTime := updatedAt + time.Duration(exp)
-					if currentTime > int64(expTime) {
-						delete(store, key)
+					if currentTime > int64(exp) {
+						delete((*rdbKeys), key)
 						conn.Write(Encode("", BULK_STRING))
 					} else {
 						conn.Write(Encode(val.Data, BULK_STRING))
