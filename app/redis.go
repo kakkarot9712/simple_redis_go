@@ -75,6 +75,14 @@ const (
 	REPLICATION infoSection = "replication"
 )
 
+var infoMap = map[infoSection]map[string]string{
+	REPLICATION: {
+		"role":               "master",
+		"master_replid":      "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
+		"master_repl_offset": "0",
+	},
+}
+
 var SupportedInfoSections = []infoSection{REPLICATION}
 var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
@@ -87,6 +95,9 @@ func proccessArgs() map[config]string {
 		configVal, found := ParseArg(conf)
 		if found {
 			configs[conf] = configVal
+		}
+		if conf == ReplicaOf && configVal != "" {
+			infoMap[REPLICATION]["role"] = "slave"
 		}
 	}
 	return configs

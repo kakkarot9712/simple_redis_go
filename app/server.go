@@ -21,6 +21,6 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		go handleConn(conn, &activeConfig, &storedKeys)
+		go handleConn(conn, &activeConfig, &storedKeys, &infoMap)
 	}
 }

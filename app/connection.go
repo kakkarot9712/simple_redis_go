@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[string]Value) {
+func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[string]Value, info *map[infoSection]map[string]string) {
 	defer conn.Close()
 	// store := map[string]Value{}
 	for {
@@ -102,13 +102,14 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 				}
 				arg := args[0]
 				if arg == string(REPLICATION) {
-					role := "master"
-					replicationMode := (*currentConfig)[ReplicaOf]
-					if replicationMode != "" {
-						role = "slave"
+					infoParts := []string{"# Replication"}
+					replInfo := (*info)[REPLICATION]
+
+					for key, val := range replInfo {
+						infoParts = append(infoParts, key+":"+val)
 					}
-					info := []string{"# Replication", "role:" + role}
-					conn.Write(Encode(strings.Join(info, "\n"), BULK_STRING))
+
+					conn.Write(Encode(strings.Join(infoParts, "\n"), BULK_STRING))
 				} else {
 					conn.Write(Encode("Only REPLICATION is supported for INFO command", BULK_STRING))
 				}
