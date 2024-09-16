@@ -129,9 +129,27 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 				} else {
 					conn.Write(Encode("NOTSUPPORTED", SIMPLE_STRING))
 				}
+
+			case PSYNC:
+				if len(args) < 2 {
+					conn.Write(Encode("atleast 2 arg is required for PSYNC command", BULK_STRING))
+					return
+				}
+				replId := args[0]
+				replOffset := args[1]
+				resp := []string{"FULLRESYNC"}
+				if replId == "?" {
+					resp = append(resp, infoMap[REPLICATION]["master_replid"])
+				}
+				if replOffset == "-1" {
+					resp = append(resp, infoMap[REPLICATION]["master_repl_offset"])
+				}
+				conn.Write(Encode(strings.Join(resp, " "), SIMPLE_STRING))
+
 			default:
 				conn.Write(Encode("", BULK_STRING))
 			}
+
 		}
 	}
 }
