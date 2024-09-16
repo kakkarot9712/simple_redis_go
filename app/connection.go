@@ -114,6 +114,21 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 				} else {
 					conn.Write(Encode("Only REPLICATION is supported for INFO command", BULK_STRING))
 				}
+			case REPLCONF:
+				if len(args) < 2 {
+					conn.Write(Encode("atleast 2 arg is required for REPLCONF command", BULK_STRING))
+					return
+				}
+				confType := args[0]
+				if confType == "listening-port" {
+					fmt.Println("REPL PORT:", args[1])
+					conn.Write(Encode("OK", SIMPLE_STRING))
+				} else if confType == "capa" {
+					fmt.Println("REPL Capabilities: ", args[1:])
+					conn.Write(Encode("OK", SIMPLE_STRING))
+				} else {
+					conn.Write(Encode("NOTSUPPORTED", SIMPLE_STRING))
+				}
 			default:
 				conn.Write(Encode("", BULK_STRING))
 			}
