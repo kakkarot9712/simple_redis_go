@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -21,9 +24,10 @@ func main() {
 		buff := make([]byte, 512)
 		// Perform Handshak process
 		conn.Write(Encode([]string{"PING"}, ARRAYS))
+		okReceived := 0
 		for {
 			size, err := conn.Read(buff)
-			if err != nil {
+			if err != nil && !errors.Is(err, io.EOF) {
 				fmt.Println("[HANDSHAKE] Error reading buffer: ", err.Error())
 				os.Exit(1)
 			}
@@ -31,7 +35,22 @@ func main() {
 				continue
 			}
 			fmt.Println(string(buff[:size]))
-			break
+			if string(buff[:size]) == "+PONG\r\n" {
+				_, err := conn.Write(Encode([]string{string(REPLCONF), "listening-port", activeConfig[PORT]}, ARRAYS))
+				if err != nil {
+					log.Fatal("[HANDSHAKE] Error writing REPLCONF command")
+				}
+				_, err = conn.Write(Encode([]string{string(REPLCONF), "capa", "psync2"}, ARRAYS))
+				if err != nil {
+					log.Fatal("[HANDSHAKE] Error writing REPLCONF command")
+				}
+			}
+			if string(buff[:size]) == "+OK\r\n" {
+				okReceived++
+			}
+			if okReceived == 2 {
+				break
+			}
 		}
 		go handleConn(conn, &activeConfig, &storedKeys, &infoMap)
 	}

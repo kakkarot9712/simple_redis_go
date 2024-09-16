@@ -44,6 +44,7 @@ const (
 	CONFIG      command = "config"
 	KEYS        command = "keys"
 	INFO        command = "info"
+	REPLCONF    command = "replconf"
 )
 
 type config string
@@ -84,7 +85,7 @@ var infoMap = map[infoSection]map[string]string{
 }
 
 var SupportedInfoSections = []infoSection{REPLICATION}
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
