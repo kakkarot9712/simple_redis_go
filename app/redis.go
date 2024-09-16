@@ -270,14 +270,14 @@ func Decode(enc []byte) any {
 		return dec
 
 	case BULK_STRING:
-		contentLength, err := strconv.Atoi(string(chunks[0]))
+		_, err := strconv.Atoi(string(chunks[0]))
 		if err != nil {
 			log.Fatal("BLEN")
 		}
-		content := chunks[1]
-		if len(content) != contentLength {
-			log.Fatal("Content Validation failed! Length mismatch: expacted " + strconv.Itoa(contentLength) + " got " + strconv.Itoa(len(content)))
-		}
+		_ = chunks[1]
+		// if len(content) != contentLength {
+		// 	log.Fatal("Content Validation failed! Length mismatch: expacted " + strconv.Itoa(contentLength) + " got " + strconv.Itoa(len(content)))
+		// }
 		return string(chunks[1])
 
 	case ARRAYS:
