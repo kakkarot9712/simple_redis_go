@@ -12,9 +12,10 @@ import (
 
 func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[string]Value, info *map[infoSection]map[string]string) {
 	defer conn.Close()
+
 	// store := map[string]Value{}
 	for {
-		resp := make([]byte, 500)
+		resp := make([]byte, 512)
 		n, err := conn.Read(resp)
 		if err != nil && err != io.EOF {
 			fmt.Println("Error Reading from conn: ", err)
