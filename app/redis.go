@@ -52,6 +52,7 @@ const (
 	DIR        config = "dir"
 	DBFILENAME config = "dbfilename"
 	PORT       config = "port"
+	ReplicaOf  config = "replicaof"
 )
 
 type miliseconds uint64
@@ -76,7 +77,7 @@ const (
 
 var SupportedInfoSections = []infoSection{REPLICATION}
 var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO}
-var SupportedConfigs = []config{DIR, DBFILENAME, PORT}
+var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
 

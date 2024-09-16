@@ -102,7 +102,12 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 				}
 				arg := args[0]
 				if arg == string(REPLICATION) {
-					info := []string{"# Replication", "role:master"}
+					role := "master"
+					replicationMode := (*currentConfig)[ReplicaOf]
+					if replicationMode != "" {
+						role = "slave"
+					}
+					info := []string{"# Replication", "role:" + role}
 					conn.Write(Encode(strings.Join(info, "\n"), BULK_STRING))
 				} else {
 					conn.Write(Encode("Only REPLICATION is supported for INFO command", BULK_STRING))
