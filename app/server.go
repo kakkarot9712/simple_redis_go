@@ -25,6 +25,7 @@ func main() {
 		// Perform Handshak process
 		conn.Write(Encode([]string{"PING"}, ARRAYS))
 		okReceived := 0
+		waitingForPSYNC := false
 		for {
 			size, err := conn.Read(buff)
 			if err != nil && !errors.Is(err, io.EOF) {
@@ -34,23 +35,33 @@ func main() {
 			if size == 0 {
 				continue
 			}
-			fmt.Println(string(buff[:size]))
 			if string(buff[:size]) == "+PONG\r\n" {
 				_, err := conn.Write(Encode([]string{string(REPLCONF), "listening-port", activeConfig[PORT]}, ARRAYS))
 				if err != nil {
-					log.Fatal("[HANDSHAKE] Error writing REPLCONF command")
+					log.Fatal("[HANDSHAKE 1] Error writing REPLCONF command")
 				}
 				_, err = conn.Write(Encode([]string{string(REPLCONF), "capa", "psync2"}, ARRAYS))
 				if err != nil {
-					log.Fatal("[HANDSHAKE] Error writing REPLCONF command")
+					log.Fatal("[HANDSHAKE 2] Error writing REPLCONF command")
 				}
 			}
 			if string(buff[:size]) == "+OK\r\n" {
 				okReceived++
 			}
-			if okReceived == 2 {
+			if waitingForPSYNC {
+				fmt.Println(string(buff[:size]))
+				waitingForPSYNC = false
 				break
 			}
+			if okReceived == 2 {
+				_, err := conn.Write(Encode([]string{string(PSYNC), "?", "-1"}, ARRAYS))
+				if err != nil {
+					log.Fatal("[HANDSHAKE] Error writing REPLCONF command")
+				}
+				waitingForPSYNC = true
+				okReceived = 0
+			}
+			// +FULLRESYNC
 		}
 		go handleConn(conn, &activeConfig, &storedKeys, &infoMap)
 	}
