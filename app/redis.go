@@ -217,7 +217,8 @@ func ParseCommand(buffer []byte) (command, []string) {
 	data := Decode(buffer)
 	cmds, ok := data.([]string)
 	if !ok || len(cmds) < 1 {
-		log.Fatal("BadData PCMD")
+		return "", []string{}
+		// log.Fatal("BadData PCMD")
 	}
 	cmd := command(strings.ToLower(cmds[0]))
 	if slices.Contains(SupportedCommands, cmd) {
