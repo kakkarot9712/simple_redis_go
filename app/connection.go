@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[string]Value, info *map[infoSection]map[string]string) {
+func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[string]Value, info *map[infoSection]map[string]string, replicaConnChannel chan net.Conn, propagateCommands chan []string) {
 	defer conn.Close()
 	emptyRdbBytes := []byte{
 		// Offset 0x00000000 to 0x00000057
@@ -59,7 +59,11 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 					val.Data = strings.Join(args[1:], " ")
 				}
 				(*rdbKeys)[key] = val
-				conn.Write(Encode("OK", SIMPLE_STRING))
+				if propagateCommands != nil {
+					commands := []string{string(SET)}
+					propagateCommands <- append(commands, args...)
+					conn.Write(Encode("OK", SIMPLE_STRING))
+				}
 			case GET:
 				key := args[0]
 				val := (*rdbKeys)[key]
@@ -157,6 +161,9 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 				content := []byte{}
 				content = append(content, []byte("$88\r\n")...)
 				content = append(content, emptyRdbBytes...)
+				if replicaConnChannel != nil {
+					replicaConnChannel <- conn
+				}
 				conn.Write(content)
 
 			default:

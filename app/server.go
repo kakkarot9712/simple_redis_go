@@ -13,6 +13,10 @@ import (
 func main() {
 	activeConfig := proccessArgs()
 	storedKeys := loadRedisDB(activeConfig[DIR], activeConfig[DBFILENAME])
+	activeReplicaConn := map[string]net.Conn{}
+	connectionChannel := make(chan net.Conn)
+	commandPropagationChannel := make(chan []string)
+
 	if infoMap[REPLICATION]["role"] == "slave" {
 		replicaConfig := strings.Split(activeConfig[ReplicaOf], " ")
 		url := replicaConfig[0] + ":" + replicaConfig[1]
@@ -63,19 +67,38 @@ func main() {
 			}
 			// +FULLRESYNC
 		}
-		go handleConn(conn, &activeConfig, &storedKeys, &infoMap)
+		go handleConn(conn, &activeConfig, &storedKeys, &infoMap, nil, nil)
 	}
 	l, err := net.Listen("tcp", "0.0.0.0:"+activeConfig[PORT])
 	if err != nil {
 		fmt.Println("Failed to bind to port", activeConfig[PORT])
 		os.Exit(1)
 	}
+
+	go func() {
+		for {
+			select {
+			case newReplicaConn := <-connectionChannel:
+				activeReplicaConn[newReplicaConn.LocalAddr().String()] = newReplicaConn
+			case commands := <-commandPropagationChannel:
+				for _, conn := range activeReplicaConn {
+					conn.Write(Encode(commands, ARRAYS))
+					if err != nil {
+						fmt.Println("replica write failed!")
+					}
+				}
+			}
+		}
+	}()
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		go handleConn(conn, &activeConfig, &storedKeys, &infoMap)
+		go handleConn(conn, &activeConfig, &storedKeys, &infoMap, connectionChannel, commandPropagationChannel)
+		fmt.Println("hi")
+
 	}
 }
