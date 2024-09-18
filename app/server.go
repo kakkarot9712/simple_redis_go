@@ -13,7 +13,7 @@ import (
 func main() {
 	activeConfig := proccessArgs()
 	storedKeys := loadRedisDB(activeConfig[DIR], activeConfig[DBFILENAME])
-	activeReplicaConn := map[string]net.Conn{}
+	activeReplicaConn := []net.Conn{}
 	connectionChannel := make(chan net.Conn)
 	commandPropagationChannel := make(chan []string)
 
@@ -79,10 +79,10 @@ func main() {
 		for {
 			select {
 			case newReplicaConn := <-connectionChannel:
-				activeReplicaConn[newReplicaConn.LocalAddr().String()] = newReplicaConn
+				activeReplicaConn = append(activeReplicaConn, newReplicaConn)
 			case commands := <-commandPropagationChannel:
 				for _, conn := range activeReplicaConn {
-					conn.Write(Encode(commands, ARRAYS))
+					_, err := conn.Write(Encode(commands, ARRAYS))
 					if err != nil {
 						fmt.Println("replica write failed!")
 					}
@@ -98,7 +98,5 @@ func main() {
 			os.Exit(1)
 		}
 		go handleConn(conn, &activeConfig, &storedKeys, &infoMap, connectionChannel, commandPropagationChannel)
-		fmt.Println("hi")
-
 	}
 }
