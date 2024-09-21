@@ -220,6 +220,13 @@ type redisCommand struct {
 	args []string
 }
 
+func (r *redisCommand) getRawBytesLength() int {
+	buff := []string{string(r.cmd)}
+	buff = append(buff, r.args...)
+	encodedCmd := Encode(buff, ARRAYS)
+	return len(encodedCmd)
+}
+
 func ParseCommand(buffer []byte) []redisCommand {
 	chunks := strings.Split(string(buffer), "*")
 	redisCommands := []redisCommand{}
@@ -348,8 +355,10 @@ func Decode(enc []byte) any {
 	}
 }
 
-func handleCommands(c redisCommand, conn *net.Conn, storedKeys *map[string]Value) {
+func handleCommands(c redisCommand, conn *net.Conn, storedKeys *map[string]Value, bytesProcessed int) {
 	switch c.cmd {
+	case PING:
+		fmt.Println("Master alive!")
 	case SET:
 		setValueToDB(c.args, storedKeys)
 	case REPLCONF:
@@ -358,7 +367,7 @@ func handleCommands(c redisCommand, conn *net.Conn, storedKeys *map[string]Value
 			return
 		}
 		if strings.ToLower(c.args[0]) == "getack" && c.args[1] == "*" {
-			(*conn).Write(Encode([]string{string(REPLCONF), "ACK", "0"}, ARRAYS))
+			(*conn).Write(Encode([]string{string(REPLCONF), "ACK", strconv.Itoa(bytesProcessed)}, ARRAYS))
 		} else {
 			fmt.Println(c.cmd, "unupported args passed")
 		}
@@ -369,6 +378,7 @@ func handleCommands(c redisCommand, conn *net.Conn, storedKeys *map[string]Value
 
 func handleReplicaConnection(url string, port string, storedKeys *map[string]Value) {
 	conn, err := net.Dial("tcp", url)
+	bytesProcessed := 0
 	if err != nil {
 		fmt.Println("Failed to connect to master", url)
 		os.Exit(1)
@@ -415,7 +425,8 @@ func handleReplicaConnection(url string, port string, storedKeys *map[string]Val
 				cmds := ParseCommand(commandsBuff)
 				if len(cmds) > 0 {
 					for _, c := range cmds {
-						handleCommands(c, &conn, storedKeys)
+						handleCommands(c, &conn, storedKeys, bytesProcessed)
+						bytesProcessed += c.getRawBytesLength()
 					}
 				}
 			}
@@ -433,7 +444,8 @@ func handleReplicaConnection(url string, port string, storedKeys *map[string]Val
 		if handshakeCompleted {
 			commands := ParseCommand(buff[:size])
 			for _, c := range commands {
-				handleCommands(c, &conn, storedKeys)
+				handleCommands(c, &conn, storedKeys, bytesProcessed)
+				bytesProcessed += c.getRawBytesLength()
 			}
 		}
 		// +FULLRESYNC
