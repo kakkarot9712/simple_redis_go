@@ -7,6 +7,8 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
+	"time"
 )
 
 func getOctetFromByte(b byte) string {
@@ -93,4 +95,45 @@ func ParseArg(arg config) (string, bool) {
 		panic("--" + arg + " does not have any parameters passed!")
 	}
 	return os.Args[argIndex+1], true
+}
+
+func getValueFromDB(args []string, rdbKeys *map[string]Value) string {
+	key := args[0]
+	val := (*rdbKeys)[key]
+	exp := val.Exp
+	// updatedAt := val.UpdatedAt
+	if exp == 0 {
+		return val.Data
+		// conn.Write(Encode(val.Data, BULK_STRING))
+	} else {
+		currentTime := time.Now().UnixMilli()
+		if currentTime > int64(exp) {
+			delete((*rdbKeys), key)
+			return ""
+			// conn.Write(Encode("", BULK_STRING))
+		} else {
+			return val.Data
+			// conn.Write(Encode(val.Data, BULK_STRING))
+		}
+	}
+}
+
+func setValueToDB(args []string, rdbKeys *map[string]Value) bool {
+	key := args[0]
+	val := Value{}
+	withPxArg := false
+	if strings.ToLower(args[len(args)-2]) == "px" {
+		exp, err := strconv.Atoi(args[len(args)-1])
+		if err == nil {
+			val.Exp = miliseconds(time.Now().UnixMilli() + int64(exp))
+			val.Data = strings.Join(args[1:len(args)-2], " ")
+			// val.UpdatedAt = time.Duration(time.Now().UnixMilli())
+			withPxArg = true
+		}
+	}
+	if !withPxArg {
+		val.Data = strings.Join(args[1:], " ")
+	}
+	(*rdbKeys)[key] = val
+	return true
 }

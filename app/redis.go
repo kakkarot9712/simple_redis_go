@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"os"
 	"path"
 	"slices"
@@ -213,19 +215,43 @@ func loadRedisDB(filepath string, filename string) map[string]Value {
 	}
 }
 
-func ParseCommand(buffer []byte) (command, []string) {
-	data := Decode(buffer)
-	cmds, ok := data.([]string)
-	if !ok || len(cmds) < 1 {
-		return "", []string{}
-		// log.Fatal("BadData PCMD")
+type redisCommand struct {
+	cmd  command
+	args []string
+}
+
+func ParseCommand(buffer []byte) []redisCommand {
+	chunks := strings.Split(string(buffer), "*")
+	redisCommands := []redisCommand{}
+	for _, chunk := range chunks[1:] {
+		if len(chunk) < 3 {
+			continue
+		}
+		encodedBytes := []byte("*")
+		data := Decode(append(encodedBytes, []byte(chunk)...))
+		if len(chunk) < 3 {
+			continue
+		}
+		cmds, ok := data.([]string)
+		if !ok || len(cmds) < 1 {
+			continue
+			// log.Fatal("BadData PCMD")
+		}
+		commandData := redisCommand{}
+		c := command(strings.ToLower(cmds[0]))
+		if slices.Contains(SupportedCommands, c) {
+			commandData.cmd = c
+			if c == KEYS {
+				commandData.args = []string{"*"}
+			} else {
+				commandData.args = cmds[1:]
+			}
+		} else {
+			commandData.cmd = UNSUPPORTED
+		}
+		redisCommands = append(redisCommands, commandData)
 	}
-	cmd := command(strings.ToLower(cmds[0]))
-	if slices.Contains(SupportedCommands, cmd) {
-		return cmd, cmds[1:]
-	} else {
-		return UNSUPPORTED, []string{}
-	}
+	return redisCommands
 }
 
 func Encode(dec any, spec protospecs) []byte {
@@ -273,7 +299,7 @@ func Decode(enc []byte) any {
 	case BULK_STRING:
 		_, err := strconv.Atoi(string(chunks[0]))
 		if err != nil {
-			log.Fatal("BLEN")
+			log.Fatal("BLEN", err)
 		}
 		_ = chunks[1]
 		// if len(content) != contentLength {
@@ -285,7 +311,7 @@ func Decode(enc []byte) any {
 		// fmt.Println(string(enc))
 		arrayLength, err := strconv.Atoi(string(chunks[0]))
 		if err != nil {
-			log.Fatal("ARLEN")
+			log.Fatal("ARLEN", err)
 		}
 		cursor := 1
 		processed := 0
@@ -314,8 +340,86 @@ func Decode(enc []byte) any {
 		return data
 
 	default:
-		fmt.Println(string(enc))
 		log.Fatal("Invalid start of data: " + string(enc[0]))
 		return ""
+	}
+}
+
+func handleReplicaConnection(url string, port string, storedKeys *map[string]Value) {
+	conn, err := net.Dial("tcp", url)
+	if err != nil {
+		fmt.Println("Failed to connect to master", url)
+		os.Exit(1)
+	}
+	// Perform Handshak process
+	conn.Write(Encode([]string{"PING"}, ARRAYS))
+	buff := make([]byte, 512)
+	okReceived := 0
+	waitingForPSYNC := false
+	handshakeCompleted := false
+	for {
+		size, err := conn.Read(buff)
+		if err != nil && !errors.Is(err, io.EOF) {
+			fmt.Println("[HANDSHAKE] Error reading buffer: ", err.Error())
+			os.Exit(1)
+		}
+		if size == 0 {
+			continue
+		}
+		if string(buff[:size]) == "+PONG\r\n" {
+			_, err := conn.Write(Encode([]string{string(REPLCONF), "listening-port", port}, ARRAYS))
+			if err != nil {
+				log.Fatal("[HANDSHAKE 1] Error writing REPLCONF command")
+			}
+			_, err = conn.Write(Encode([]string{string(REPLCONF), "capa", "psync2"}, ARRAYS))
+			if err != nil {
+				log.Fatal("[HANDSHAKE 2] Error writing REPLCONF command")
+			}
+			continue
+		}
+		if string(buff[:size]) == "+OK\r\n" {
+			okReceived++
+		}
+		if waitingForPSYNC {
+			waitingForPSYNC = false
+			handshakeCompleted = true
+			// +FULLRESYNC <REPL_ID> 0\r\n
+			// RedisDB content + commands (maybe)
+			// TODO:Load redis DB
+			crlfIndex := bytes.Index(buff[:size], []byte("0\r\n"))
+			dbEndByteIndex := bytes.Index(buff[crlfIndex+1:size], []byte{255})
+			if dbEndByteIndex != -1 && size > dbEndByteIndex+8 {
+				commandsBuff := buff[crlfIndex+1+dbEndByteIndex+8+1 : size]
+				cmds := ParseCommand(commandsBuff)
+				fmt.Println(cmds, "CMDS")
+				if len(cmds) > 0 {
+					for _, c := range cmds {
+						setValueToDB(c.args, storedKeys)
+					}
+				}
+			}
+			continue
+		}
+		if okReceived == 2 {
+			_, err := conn.Write(Encode([]string{string(PSYNC), "?", "-1"}, ARRAYS))
+			if err != nil {
+				log.Fatal("[HANDSHAKE] Error writing REPLCONF command")
+			}
+			waitingForPSYNC = true
+			okReceived = 0
+			continue
+		}
+		if handshakeCompleted {
+			commands := ParseCommand(buff[:size])
+			for _, c := range commands {
+				switch c.cmd {
+				case SET:
+					setValueToDB(c.args, storedKeys)
+				default:
+					fmt.Println(c.cmd, "ignored")
+				}
+			}
+		}
+		// +FULLRESYNC
 	}
 }
