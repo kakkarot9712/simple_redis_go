@@ -152,10 +152,7 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 						conn.Write(Encode("atleast 2 arg is required for WAIT command", BULK_STRING))
 						return
 					}
-
-					if args[0] == "0" {
-						conn.Write(Encode(0, INTEGER))
-					}
+					conn.Write(Encode(len(*activereplicaConn), INTEGER))
 
 				default:
 					conn.Write(Encode("", BULK_STRING))
