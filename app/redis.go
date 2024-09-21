@@ -245,6 +245,9 @@ func ParseCommand(buffer []byte) []redisCommand {
 				commandData.args = []string{"*"}
 			} else {
 				commandData.args = cmds[1:]
+				if c == REPLCONF && strings.ToLower(cmds[1]) == "getack" {
+					commandData.args = []string{cmds[1], "*"}
+				}
 			}
 		} else {
 			commandData.cmd = UNSUPPORTED
@@ -345,6 +348,25 @@ func Decode(enc []byte) any {
 	}
 }
 
+func handleCommands(c redisCommand, conn *net.Conn, storedKeys *map[string]Value) {
+	switch c.cmd {
+	case SET:
+		setValueToDB(c.args, storedKeys)
+	case REPLCONF:
+		if len(c.args) < 2 {
+			fmt.Println(c.cmd, "invalid args passed")
+			return
+		}
+		if strings.ToLower(c.args[0]) == "getack" && c.args[1] == "*" {
+			(*conn).Write(Encode([]string{string(REPLCONF), "ACK", "0"}, ARRAYS))
+		} else {
+			fmt.Println(c.cmd, "unupported args passed")
+		}
+	default:
+		fmt.Println(c.cmd, "ignored")
+	}
+}
+
 func handleReplicaConnection(url string, port string, storedKeys *map[string]Value) {
 	conn, err := net.Dial("tcp", url)
 	if err != nil {
@@ -391,10 +413,9 @@ func handleReplicaConnection(url string, port string, storedKeys *map[string]Val
 			if dbEndByteIndex != -1 && size > dbEndByteIndex+8 {
 				commandsBuff := buff[crlfIndex+1+dbEndByteIndex+8+1 : size]
 				cmds := ParseCommand(commandsBuff)
-				fmt.Println(cmds, "CMDS")
 				if len(cmds) > 0 {
 					for _, c := range cmds {
-						setValueToDB(c.args, storedKeys)
+						handleCommands(c, &conn, storedKeys)
 					}
 				}
 			}
@@ -412,12 +433,7 @@ func handleReplicaConnection(url string, port string, storedKeys *map[string]Val
 		if handshakeCompleted {
 			commands := ParseCommand(buff[:size])
 			for _, c := range commands {
-				switch c.cmd {
-				case SET:
-					setValueToDB(c.args, storedKeys)
-				default:
-					fmt.Println(c.cmd, "ignored")
-				}
+				handleCommands(c, &conn, storedKeys)
 			}
 		}
 		// +FULLRESYNC
