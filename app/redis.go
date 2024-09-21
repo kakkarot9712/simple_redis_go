@@ -21,7 +21,7 @@ type protospecs string
 const (
 	SIMPLE_STRING    protospecs = "+"
 	SIMPLE_ERRORS    protospecs = "-"
-	INTEGER          protospecs = ";"
+	INTEGER          protospecs = ":"
 	BULK_STRING      protospecs = "$"
 	ARRAYS           protospecs = "*"
 	NULLS            protospecs = "_"
@@ -48,6 +48,7 @@ const (
 	INFO        command = "info"
 	REPLCONF    command = "replconf"
 	PSYNC       command = "psync"
+	WAIT        command = "wait"
 )
 
 type config string
@@ -88,7 +89,7 @@ var infoMap = map[infoSection]map[string]string{
 }
 
 var SupportedInfoSections = []infoSection{REPLICATION}
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
@@ -292,6 +293,13 @@ func Encode(dec any, spec protospecs) []byte {
 			enc += string(encBS)
 		}
 		return []byte(enc)
+	case INTEGER:
+		num, ok := dec.(int)
+		if !ok {
+			log.Fatalf("Invalid dec passed! expected integer got %T", dec)
+		}
+		numStr := strconv.Itoa(num)
+		return []byte(string(INTEGER) + numStr + "\r\n")
 	default:
 		log.Fatal("Yet to implement!")
 	}
