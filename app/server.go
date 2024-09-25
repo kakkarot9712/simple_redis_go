@@ -10,7 +10,7 @@ import (
 func main() {
 	activeConfig := proccessArgs()
 	storedKeys := loadRedisDB(activeConfig[DIR], activeConfig[DBFILENAME])
-	activeReplicaConn := []net.Conn{}
+	activeReplicaConn := []RedisConn{}
 
 	l, err := net.Listen("tcp", "0.0.0.0:"+activeConfig[PORT])
 	if err != nil {
@@ -31,9 +31,9 @@ func main() {
 			os.Exit(1)
 		}
 		if infoMap[REPLICATION]["role"] == "slave" {
-			go handleConn(conn, &activeConfig, &storedKeys, &infoMap, nil)
+			go handleConn(RedisConn{conn}, &activeConfig, &storedKeys, &infoMap, nil)
 		} else {
-			go handleConn(conn, &activeConfig, &storedKeys, &infoMap, &activeReplicaConn)
+			go handleConn(RedisConn{conn}, &activeConfig, &storedKeys, &infoMap, &activeReplicaConn)
 		}
 	}
 }

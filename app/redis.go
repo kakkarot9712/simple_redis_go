@@ -49,6 +49,7 @@ const (
 	REPLCONF    command = "replconf"
 	PSYNC       command = "psync"
 	WAIT        command = "wait"
+	TYPE        command = "type"
 )
 
 type config string
@@ -89,7 +90,7 @@ var infoMap = map[infoSection]map[string]string{
 }
 
 var SupportedInfoSections = []infoSection{REPLICATION}
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
@@ -300,6 +301,12 @@ func Encode(dec any, spec protospecs) []byte {
 		}
 		numStr := strconv.Itoa(num)
 		return []byte(string(INTEGER) + numStr + "\r\n")
+	case SIMPLE_ERRORS:
+		message, ok := dec.(string)
+		if !ok {
+			log.Fatalf("inavild dec passed! expected string got %T", dec)
+		}
+		return []byte(string(SIMPLE_ERRORS) + message + "\r\n")
 	default:
 		log.Fatal("Yet to implement!")
 	}
@@ -361,6 +368,26 @@ func Decode(enc []byte) any {
 		log.Fatal("Invalid start of data: " + string(enc[0]))
 		return ""
 	}
+}
+
+type RedisConn struct {
+	net.Conn
+}
+
+func (c RedisConn) SendMessage(message any, rType protospecs) (n int, err error) {
+	// c.Write()
+	n, err = c.Write(Encode(message, rType))
+	return
+}
+
+func (c RedisConn) SendError(message string) (n int, err error) {
+	n, err = c.Write(Encode(message, SIMPLE_ERRORS))
+	return
+}
+
+func (c RedisConn) WriteOK() (n int, err error) {
+	n, err = c.Write(Encode("OK", SIMPLE_STRING))
+	return
 }
 
 func handleCommands(c redisCommand, conn *net.Conn, storedKeys *map[string]Value, bytesProcessed int) {

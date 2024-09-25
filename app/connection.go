@@ -3,12 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"strings"
 )
 
-func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[string]Value, info *map[infoSection]map[string]string, activereplicaConn *[]net.Conn) {
+func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[string]Value, info *map[infoSection]map[string]string, activereplicaConn *[]RedisConn) {
 	defer conn.Close()
 	emptyRdbBytes := []byte{
 		0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x31, 0x31, 0xFA, 0x09, 0x72,
@@ -38,19 +37,19 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 				args := c.args
 				switch cmd {
 				case PING:
-					conn.Write(Encode("PONG", SIMPLE_STRING))
+					conn.SendMessage("PONG", SIMPLE_STRING)
 				case ECHO:
 					msg := strings.Join(args, " ")
-					conn.Write(Encode(msg, BULK_STRING))
+					conn.SendMessage(msg, BULK_STRING)
 				case SET:
 					setValueToDB(args, rdbKeys)
-					conn.Write(Encode("OK", SIMPLE_STRING))
+					conn.WriteOK()
 					go func() {
 						if activereplicaConn != nil {
 							commands := []string{string(SET)}
 							commands = append(commands, args...)
 							for _, conn := range *activereplicaConn {
-								_, err := conn.Write(Encode(commands, ARRAYS))
+								_, err := conn.SendMessage(commands, ARRAYS)
 								if err != nil {
 									fmt.Println("replica propagation failed!")
 								}
@@ -58,27 +57,26 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 						}
 					}()
 				case GET:
-					value := getValueFromDB(args, rdbKeys)
-					conn.Write(Encode(value, BULK_STRING))
+					value := getValueFromDB(args[0], rdbKeys)
+					conn.SendMessage(value, BULK_STRING)
 				case CONFIG:
 					if len(args) == 0 {
-						conn.Write(Encode("atleast 1 arg is required for CONFIG command", BULK_STRING))
+						conn.SendError("ERR wrong number of args for `config` command")
 						return
 					}
 					subcmd := strings.ToLower(args[0])
 					if subcmd == "get" {
 						if len(args) < 2 {
-							conn.Write(Encode("name is required for CONFIG GET command", BULK_STRING))
+							conn.SendError("ERR key is required for `config get command`")
 							return
 						}
 						configName := args[1]
 						configVal := (*currentConfig)[config(configName)]
-						data := Encode([]string{configName, configVal}, ARRAYS)
-						conn.Write(data)
+						conn.SendMessage([]string{configName, configVal}, ARRAYS)
 					}
 				case KEYS:
 					if len(args) == 0 {
-						conn.Write(Encode("atleast 1 arg is required for KEY command", BULK_STRING))
+						conn.SendError("ERR wrong number of args for `keys` command")
 						return
 					}
 					arg := args[0]
@@ -87,11 +85,11 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 						for key := range *rdbKeys {
 							keys = append(keys, key)
 						}
-						conn.Write(Encode(keys, ARRAYS))
+						conn.SendMessage(keys, ARRAYS)
 					}
 				case INFO:
 					if len(args) == 0 {
-						conn.Write(Encode("atleast 1 arg is required for INFO command", BULK_STRING))
+						conn.SendError("ERR wrong number of args for `info` command")
 						return
 					}
 					arg := args[0]
@@ -102,30 +100,29 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 						for key, val := range replInfo {
 							infoParts = append(infoParts, key+":"+val)
 						}
-
-						conn.Write(Encode(strings.Join(infoParts, "\n"), BULK_STRING))
+						conn.SendMessage(strings.Join(infoParts, "\n"), BULK_STRING)
 					} else {
-						conn.Write(Encode("Only REPLICATION is supported for INFO command", BULK_STRING))
+						conn.SendError("ERR only REPLICATION is supported for `info` command as of now")
 					}
 				case REPLCONF:
 					if len(args) < 2 {
-						conn.Write(Encode("atleast 2 arg is required for REPLCONF command", BULK_STRING))
+						conn.SendError("ERR wrong number of args for `replconf` command")
 						return
 					}
 					confType := args[0]
 					if confType == "listening-port" {
-						fmt.Println("REPL PORT:", args[1])
-						conn.Write(Encode("OK", SIMPLE_STRING))
+						// fmt.Println("REPL PORT:", args[1])
+						conn.WriteOK()
 					} else if confType == "capa" {
-						fmt.Println("REPL Capabilities: ", args[1:])
-						conn.Write(Encode("OK", SIMPLE_STRING))
+						// fmt.Println("REPL Capabilities: ", args[1:])
+						conn.WriteOK()
 					} else {
-						conn.Write(Encode("NOTSUPPORTED", SIMPLE_STRING))
+						conn.SendError("ERR invalid sub command received for `replconf`")
 					}
 
 				case PSYNC:
 					if len(args) < 2 {
-						conn.Write(Encode("atleast 2 arg is required for PSYNC command", BULK_STRING))
+						conn.SendError("ERR wrong number of args for `psync` command")
 						return
 					}
 					replId := args[0]
@@ -137,11 +134,10 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 					if replOffset == "-1" {
 						resp = append(resp, infoMap[REPLICATION]["master_repl_offset"])
 					}
-					conn.Write(Encode(strings.Join(resp, " "), SIMPLE_STRING))
+					conn.SendMessage(strings.Join(resp, " "), SIMPLE_STRING)
 					content := []byte{}
 					content = append(content, []byte("$88\r\n")...)
 					content = append(content, emptyRdbBytes...)
-					fmt.Println(*activereplicaConn, "CONN")
 					if activereplicaConn != nil {
 						(*activereplicaConn) = append((*activereplicaConn), conn)
 					}
@@ -149,15 +145,26 @@ func handleConn(conn net.Conn, currentConfig *map[config]string, rdbKeys *map[st
 
 				case WAIT:
 					if len(args) < 2 {
-						conn.Write(Encode("atleast 2 arg is required for WAIT command", BULK_STRING))
+						conn.SendError("ERR wrong number of args for `wait` command")
 						return
 					}
-					conn.Write(Encode(len(*activereplicaConn), INTEGER))
+					conn.SendMessage(len(*activereplicaConn), INTEGER)
+				case TYPE:
+					if len(args) < 1 {
+						conn.SendError("ERR wrong number of args for `type` command")
+						return
+					}
+					key := args[0]
+					value := getValueFromDB(key, rdbKeys)
+					if value == "" {
+						conn.SendMessage("none", SIMPLE_STRING)
+					} else {
+						conn.SendMessage("string", SIMPLE_STRING)
+					}
 
 				default:
-					conn.Write(Encode("", BULK_STRING))
+					conn.SendMessage("", BULK_STRING)
 				}
-
 			}
 		}
 	}

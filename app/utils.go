@@ -97,8 +97,7 @@ func ParseArg(arg config) (string, bool) {
 	return os.Args[argIndex+1], true
 }
 
-func getValueFromDB(args []string, rdbKeys *map[string]Value) string {
-	key := args[0]
+func getValueFromDB(key string, rdbKeys *map[string]Value) string {
 	val := (*rdbKeys)[key]
 	exp := val.Exp
 	// updatedAt := val.UpdatedAt
