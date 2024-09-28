@@ -1,34 +1,87 @@
-[![progress-banner](https://backend.codecrafters.io/progress/redis/f862aa69-e8ce-4c21-96b9-8358e0a029cc)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# Simple Redis
 
-This is a starting point for Go solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+This project is a simplified Redis clone implemented in Go, created as part of the CodeCrafters "Build Your Own Redis" challenge. It supports a subset of Redis commands and provides basic functionality for key-value storage and retrieval.
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+## Supported Features
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+- Basic key/value storage using `GET` and `SET` command with values with expiry time.
+- RDB local database support for persistant storage.
+- Partial Replication support.
 
-# Passing the first stage
+## Prerequisites
 
-The entry point for your Redis implementation is in `app/server.go`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+This project requires Go to be installed on your system. If you don't have Go installed, you can download it from the official Go downloads page:
 
-```sh
-git add .
-git commit -m "pass 1st stage" # any msg
-git push origin master
+[https://go.dev/dl/](https://go.dev/dl/)
+
+Choose the appropriate version for your operating system and follow the installation instructions provided on the Go website.
+
+## Installation
+
+After ensuring Go is installed on your system, follow these steps to set up Simple Git:
+
+1. Clone the repository:
+   ```
+   git clone https://github.com/kakkarot9712/simple_redis_go
+   ```
+
+2. Navigate to the project directory:
+   ```
+   cd simple-redis-go
+   ```
+
+3. Build the project:
+   ```
+   go build -o myredis ./app
+   ```
+
+This will create an executable named `myredis` in your project directory.
+
+## Usage
+
+- After building the project, you can use the `myredis` executable to start server.
+```
+./myredis 
 ```
 
-That's all!
+- By default this server will bind to port `6379`, Though you can use any port using `--port` flag while starting server
+```
+./myredis --port 6380
+```
 
-# Stage 2 & beyond
+- You can load existing RDB file while staring the server using `--dir` flag to specify file location and `--dbfilename` flag to specify RDB file name.
+```
+./myredis --dir /tmp/redis-files --dbfilename dump.rdb
+```
+**Note**: If you dont specify directory and file paths, server will try to fetch `dump.rdb` file from `/tmp/redis-files` directory.
 
-Note: This section is for stages 2 and beyond.
+- By default Server will assume a `master` role. To start server as replica server of some other master server you can pass `--replicaof` flag along with host and port of `master` server.
+```
+./myredis --replicaof "localhost 6379"
+```
 
-1. Ensure you have `go (1.19)` installed locally
-1. Run `./your_program.sh` to run your Redis server, which is implemented in
-   `app/server.go`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+## Supported Commands
+
+The following Redis commands are implemented in this project:
+
+1. `PING`: Test the server connection
+2. `ECHO`: Echo the given string
+3. `SET`: Set a key to hold a string value
+4. `GET`: Retrieve the value of a key
+5. `CONFIG`: Get or set server configuration parameters
+6. `KEYS *`: Find all keys
+7. `INFO`: Get information and statistics about the server
+8. `REPLCONF`: Configure replication settings
+9. `PSYNC`: Internal command used for replication
+
+## Limitations
+
+- This server does not support `HGET` and `HSET` command as of now.
+- Replication is partially supported. Though propagation of commands does works, some commands related to command propagation valdation like `WAIT` is not implimented as of now.
+- Server only supports loading RDB file from specified location but does not support RDB File saving using `SAVE` command as of now.
+- This server only supports very limited and basic features.
+
+## Acknowledgments
+
+- CodeCrafters for providing the "Build Your Own Redis" challenge
+- The Redis project for inspiration and documentation
