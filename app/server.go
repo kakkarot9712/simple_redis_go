@@ -7,10 +7,14 @@ import (
 	"strings"
 )
 
+var activeConfig map[config]string
+var storedKeys map[string]Value
+var activeReplicaConn []RedisConn
+
 func main() {
-	activeConfig := proccessArgs()
-	storedKeys := loadRedisDB(activeConfig[DIR], activeConfig[DBFILENAME])
-	activeReplicaConn := []RedisConn{}
+	activeConfig = proccessArgs()
+	storedKeys = loadRedisDB(activeConfig[DIR], activeConfig[DBFILENAME])
+	activeReplicaConn = []RedisConn{}
 
 	l, err := net.Listen("tcp", "0.0.0.0:"+activeConfig[PORT])
 	if err != nil {
@@ -21,7 +25,7 @@ func main() {
 	if infoMap[REPLICATION]["role"] == "slave" {
 		replicaConfig := strings.Split(activeConfig[ReplicaOf], " ")
 		url := replicaConfig[0] + ":" + replicaConfig[1]
-		go handleReplicaConnection(url, activeConfig[PORT], &storedKeys)
+		go handleReplicaConnection(url, activeConfig[PORT])
 	}
 
 	for {
@@ -30,10 +34,6 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		if infoMap[REPLICATION]["role"] == "slave" {
-			go handleConn(RedisConn{conn}, &activeConfig, &storedKeys, &infoMap, nil)
-		} else {
-			go handleConn(RedisConn{conn}, &activeConfig, &storedKeys, &infoMap, &activeReplicaConn)
-		}
+		go handleConn(RedisConn{conn})
 	}
 }

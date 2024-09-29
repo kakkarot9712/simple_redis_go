@@ -50,6 +50,7 @@ const (
 	PSYNC       command = "psync"
 	WAIT        command = "wait"
 	TYPE        command = "type"
+	XADD        command = "xadd"
 )
 
 type config string
@@ -90,7 +91,7 @@ var infoMap = map[infoSection]map[string]string{
 }
 
 var SupportedInfoSections = []infoSection{REPLICATION}
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE, XADD}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
@@ -390,12 +391,12 @@ func (c RedisConn) WriteOK() (n int, err error) {
 	return
 }
 
-func handleCommands(c redisCommand, conn *net.Conn, storedKeys *map[string]Value, bytesProcessed int) {
+func handleCommands(c redisCommand, conn *net.Conn, bytesProcessed int) {
 	switch c.cmd {
 	case PING:
 		fmt.Println("Master alive!")
 	case SET:
-		setValueToDB(c.args, storedKeys)
+		setValueToDB(c.args)
 	case REPLCONF:
 		if len(c.args) < 2 {
 			fmt.Println(c.cmd, "invalid args passed")
@@ -411,7 +412,7 @@ func handleCommands(c redisCommand, conn *net.Conn, storedKeys *map[string]Value
 	}
 }
 
-func handleReplicaConnection(url string, port string, storedKeys *map[string]Value) {
+func handleReplicaConnection(url string, port string) {
 	conn, err := net.Dial("tcp", url)
 	bytesProcessed := 0
 	if err != nil {
@@ -460,7 +461,7 @@ func handleReplicaConnection(url string, port string, storedKeys *map[string]Val
 				cmds := ParseCommand(commandsBuff)
 				if len(cmds) > 0 {
 					for _, c := range cmds {
-						handleCommands(c, &conn, storedKeys, bytesProcessed)
+						handleCommands(c, &conn, bytesProcessed)
 						bytesProcessed += c.getRawBytesLength()
 					}
 				}
@@ -479,7 +480,7 @@ func handleReplicaConnection(url string, port string, storedKeys *map[string]Val
 		if handshakeCompleted {
 			commands := ParseCommand(buff[:size])
 			for _, c := range commands {
-				handleCommands(c, &conn, storedKeys, bytesProcessed)
+				handleCommands(c, &conn, bytesProcessed)
 				bytesProcessed += c.getRawBytesLength()
 			}
 		}

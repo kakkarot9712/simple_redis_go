@@ -97,8 +97,8 @@ func ParseArg(arg config) (string, bool) {
 	return os.Args[argIndex+1], true
 }
 
-func getValueFromDB(key string, rdbKeys *map[string]Value) string {
-	val := (*rdbKeys)[key]
+func getValueFromDB(key string) string {
+	val := storedKeys[key]
 	exp := val.Exp
 	// updatedAt := val.UpdatedAt
 	if exp == 0 {
@@ -107,7 +107,7 @@ func getValueFromDB(key string, rdbKeys *map[string]Value) string {
 	} else {
 		currentTime := time.Now().UnixMilli()
 		if currentTime > int64(exp) {
-			delete((*rdbKeys), key)
+			delete(storedKeys, key)
 			return ""
 			// conn.Write(Encode("", BULK_STRING))
 		} else {
@@ -117,7 +117,7 @@ func getValueFromDB(key string, rdbKeys *map[string]Value) string {
 	}
 }
 
-func setValueToDB(args []string, rdbKeys *map[string]Value) bool {
+func setValueToDB(args []string) bool {
 	key := args[0]
 	val := Value{}
 	withPxArg := false
@@ -133,6 +133,6 @@ func setValueToDB(args []string, rdbKeys *map[string]Value) bool {
 	if !withPxArg {
 		val.Data = strings.Join(args[1:], " ")
 	}
-	(*rdbKeys)[key] = val
+	storedKeys[key] = val
 	return true
 }

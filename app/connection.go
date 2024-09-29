@@ -7,8 +7,9 @@ import (
 	"strings"
 )
 
-func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[string]Value, info *map[infoSection]map[string]string, activereplicaConn *[]RedisConn) {
+func handleConn(conn RedisConn) {
 	defer conn.Close()
+	streams := map[string]string{}
 	emptyRdbBytes := []byte{
 		0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x31, 0x31, 0xFA, 0x09, 0x72,
 		0x65, 0x64, 0x69, 0x73, 0x2D, 0x76, 0x65, 0x72, 0x05, 0x37, 0x2E, 0x32,
@@ -42,13 +43,13 @@ func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[s
 					msg := strings.Join(args, " ")
 					conn.SendMessage(msg, BULK_STRING)
 				case SET:
-					setValueToDB(args, rdbKeys)
+					setValueToDB(args)
 					conn.WriteOK()
 					go func() {
-						if activereplicaConn != nil {
+						if infoMap[REPLICATION]["role"] == "master" {
 							commands := []string{string(SET)}
 							commands = append(commands, args...)
-							for _, conn := range *activereplicaConn {
+							for _, conn := range activeReplicaConn {
 								_, err := conn.SendMessage(commands, ARRAYS)
 								if err != nil {
 									fmt.Println("replica propagation failed!")
@@ -57,7 +58,7 @@ func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[s
 						}
 					}()
 				case GET:
-					value := getValueFromDB(args[0], rdbKeys)
+					value := getValueFromDB(args[0])
 					conn.SendMessage(value, BULK_STRING)
 				case CONFIG:
 					if len(args) == 0 {
@@ -71,7 +72,7 @@ func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[s
 							return
 						}
 						configName := args[1]
-						configVal := (*currentConfig)[config(configName)]
+						configVal := activeConfig[config(configName)]
 						conn.SendMessage([]string{configName, configVal}, ARRAYS)
 					}
 				case KEYS:
@@ -82,7 +83,7 @@ func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[s
 					arg := args[0]
 					if arg == "*" {
 						keys := []string{}
-						for key := range *rdbKeys {
+						for key := range storedKeys {
 							keys = append(keys, key)
 						}
 						conn.SendMessage(keys, ARRAYS)
@@ -95,7 +96,7 @@ func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[s
 					arg := args[0]
 					if arg == string(REPLICATION) {
 						infoParts := []string{"# Replication"}
-						replInfo := (*info)[REPLICATION]
+						replInfo := infoMap[REPLICATION]
 
 						for key, val := range replInfo {
 							infoParts = append(infoParts, key+":"+val)
@@ -138,8 +139,8 @@ func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[s
 					content := []byte{}
 					content = append(content, []byte("$88\r\n")...)
 					content = append(content, emptyRdbBytes...)
-					if activereplicaConn != nil {
-						(*activereplicaConn) = append((*activereplicaConn), conn)
+					if infoMap[REPLICATION]["role"] == "master" {
+						activeReplicaConn = append(activeReplicaConn, conn)
 					}
 					conn.Write(content)
 
@@ -148,20 +149,29 @@ func handleConn(conn RedisConn, currentConfig *map[config]string, rdbKeys *map[s
 						conn.SendError("ERR wrong number of args for `wait` command")
 						return
 					}
-					conn.SendMessage(len(*activereplicaConn), INTEGER)
+					conn.SendMessage(len(activeReplicaConn), INTEGER)
 				case TYPE:
 					if len(args) < 1 {
 						conn.SendError("ERR wrong number of args for `type` command")
 						return
 					}
 					key := args[0]
-					value := getValueFromDB(key, rdbKeys)
+					value := getValueFromDB(key)
 					if value == "" {
-						conn.SendMessage("none", SIMPLE_STRING)
+						value = streams[key]
+						if value != "" {
+							conn.SendMessage("stream", SIMPLE_STRING)
+						} else {
+							conn.SendMessage("none", SIMPLE_STRING)
+						}
 					} else {
 						conn.SendMessage("string", SIMPLE_STRING)
 					}
-
+				case XADD:
+					key := args[0]
+					id := args[1]
+					streams[key] = id
+					conn.SendMessage(id, BULK_STRING)
 				default:
 					conn.SendMessage("", BULK_STRING)
 				}
