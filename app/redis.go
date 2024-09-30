@@ -230,7 +230,21 @@ func (r *redisCommand) getRawBytesLength() int {
 	return len(encodedCmd)
 }
 
-func ParseCommand(buffer []byte) []redisCommand {
+func ParseCommand(buffer []byte) (command, []string) {
+	data := Decode(buffer)
+	cmds, ok := data.([]string)
+	if !ok || len(cmds) < 1 {
+		log.Fatal("BadData PCMD")
+	}
+	cmd := command(strings.ToLower(cmds[0]))
+	if slices.Contains(SupportedCommands, cmd) {
+		return cmd, cmds[1:]
+	} else {
+		return UNSUPPORTED, []string{}
+	}
+}
+
+func ParseCommands(buffer []byte) []redisCommand {
 	chunks := strings.Split(string(buffer), "*")
 	redisCommands := []redisCommand{}
 	for _, chunk := range chunks[1:] {
@@ -458,7 +472,7 @@ func handleReplicaConnection(url string, port string) {
 			dbEndByteIndex := bytes.Index(buff[crlfIndex+1:size], []byte{255})
 			if dbEndByteIndex != -1 && size > dbEndByteIndex+8 {
 				commandsBuff := buff[crlfIndex+1+dbEndByteIndex+8+1 : size]
-				cmds := ParseCommand(commandsBuff)
+				cmds := ParseCommands(commandsBuff)
 				if len(cmds) > 0 {
 					for _, c := range cmds {
 						handleCommands(c, &conn, bytesProcessed)
@@ -478,7 +492,7 @@ func handleReplicaConnection(url string, port string) {
 			continue
 		}
 		if handshakeCompleted {
-			commands := ParseCommand(buff[:size])
+			commands := ParseCommands(buff[:size])
 			for _, c := range commands {
 				handleCommands(c, &conn, bytesProcessed)
 				bytesProcessed += c.getRawBytesLength()
