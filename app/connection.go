@@ -19,11 +19,6 @@ type stream struct {
 func handleConn(conn RedisConn) {
 	defer conn.Close()
 	streams := map[string][]stream{}
-	// stream-key { stramId: {key:value} }
-	// stream_key 1-1
-	// 1-1 foo = bar
-	// streams := map[string][]map[string]string{}
-	// streams := map[string]string{}
 	emptyRdbBytes := []byte{
 		0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x31, 0x31, 0xFA, 0x09, 0x72,
 		0x65, 0x64, 0x69, 0x73, 0x2D, 0x76, 0x65, 0x72, 0x05, 0x37, 0x2E, 0x32,
@@ -45,10 +40,14 @@ func handleConn(conn RedisConn) {
 				fmt.Println("Error Decode: ", err)
 				// os.Exit(1)
 			}
-			cmd, args := ParseCommand(resp[:n])
-
+			rcmd, err := ParseCommand(resp[:n])
+			if err != nil {
+				conn.SendError("ERR Invalid command received")
+				continue
+			}
 			// for _, c := range commands {
-			switch cmd {
+			args := rcmd.args
+			switch rcmd.cmd {
 			case PING:
 				conn.SendMessage("PONG", SIMPLE_STRING)
 			case ECHO:

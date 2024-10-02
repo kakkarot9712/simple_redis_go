@@ -230,21 +230,28 @@ func (r *redisCommand) getRawBytesLength() int {
 	return len(encodedCmd)
 }
 
-func ParseCommand(buffer []byte) (command, []string) {
-	data := Decode(buffer)
+func ParseCommand(buffer []byte) (redisCommand, error) {
+	data, err := Decode(buffer)
+	if err != nil {
+		return redisCommand{}, err
+	}
+	rcmd := redisCommand{}
 	cmds, ok := data.([]string)
 	if !ok || len(cmds) < 1 {
-		log.Fatal("BadData PCMD")
+		return rcmd, errors.New("command decode failed")
 	}
 	cmd := command(strings.ToLower(cmds[0]))
 	if slices.Contains(SupportedCommands, cmd) {
-		return cmd, cmds[1:]
+		rcmd.cmd = cmd
+		rcmd.args = cmds[1:]
+		return rcmd, nil
 	} else {
-		return UNSUPPORTED, []string{}
+		rcmd.cmd = UNSUPPORTED
+		return rcmd, errors.New("unsupported command passed")
 	}
 }
 
-func ParseCommands(buffer []byte) []redisCommand {
+func ParseCommands(buffer []byte) ([]redisCommand, error) {
 	chunks := strings.Split(string(buffer), "*")
 	redisCommands := []redisCommand{}
 	for _, chunk := range chunks[1:] {
@@ -252,7 +259,10 @@ func ParseCommands(buffer []byte) []redisCommand {
 			continue
 		}
 		encodedBytes := []byte("*")
-		data := Decode(append(encodedBytes, []byte(chunk)...))
+		data, err := Decode(append(encodedBytes, []byte(chunk)...))
+		if err != nil {
+			return nil, err
+		}
 		if len(chunk) < 3 {
 			continue
 		}
@@ -278,7 +288,7 @@ func ParseCommands(buffer []byte) []redisCommand {
 		}
 		redisCommands = append(redisCommands, commandData)
 	}
-	return redisCommands
+	return redisCommands, nil
 }
 
 func Encode(dec any, spec protospecs) []byte {
@@ -328,30 +338,31 @@ func Encode(dec any, spec protospecs) []byte {
 	return []byte{}
 }
 
-func Decode(enc []byte) any {
+func Decode(enc []byte) (any, error) {
 	strType := enc[0]
 	chunks := bytes.Split(enc[1:], []byte("\r\n"))
 	switch protospecs(strType) {
 	case SIMPLE_STRING:
 		dec := string(chunks[0])
-		return dec
+		return dec, nil
 
 	case BULK_STRING:
 		_, err := strconv.Atoi(string(chunks[0]))
 		if err != nil {
-			log.Fatal("BLEN", err)
+			return nil, err
 		}
 		_ = chunks[1]
 		// if len(content) != contentLength {
 		// 	log.Fatal("Content Validation failed! Length mismatch: expacted " + strconv.Itoa(contentLength) + " got " + strconv.Itoa(len(content)))
 		// }
-		return string(chunks[1])
+		return string(chunks[1]), nil
 
 	case ARRAYS:
 		// fmt.Println(string(enc))
 		arrayLength, err := strconv.Atoi(string(chunks[0]))
 		if err != nil {
-			log.Fatal("ARLEN", err)
+			// log.Fatal("ARLEN", err)
+			return nil, err
 		}
 		cursor := 1
 		processed := 0
@@ -362,12 +373,16 @@ func Decode(enc []byte) any {
 				encData := chunks[cursor]
 				encData = append(encData, clrfBytes...)
 				encData = append(encData, chunks[cursor+1]...)
-				dec := Decode(encData)
+				dec, err := Decode(encData)
+				if err != nil {
+					return nil, err
+				}
 				val, ok := dec.(string)
 				if ok {
 					data = append(data, val)
 				} else {
-					log.Fatal("BadData Received!: ", dec)
+					fmt.Println("BadData Received!: ", dec)
+					return nil, errors.New("invalid data found while decoding arrays")
 				}
 				cursor += 2
 				processed++
@@ -377,11 +392,11 @@ func Decode(enc []byte) any {
 				break
 			}
 		}
-		return data
+		return data, nil
 
 	default:
-		log.Fatal("Invalid start of data: " + string(enc[0]))
-		return ""
+		fmt.Println("Invalid start of data: " + string(enc[0]))
+		return "", errors.New("unsupported encoding type found")
 	}
 }
 
@@ -472,7 +487,11 @@ func handleReplicaConnection(url string, port string) {
 			dbEndByteIndex := bytes.Index(buff[crlfIndex+1:size], []byte{255})
 			if dbEndByteIndex != -1 && size > dbEndByteIndex+8 {
 				commandsBuff := buff[crlfIndex+1+dbEndByteIndex+8+1 : size]
-				cmds := ParseCommands(commandsBuff)
+				cmds, err := ParseCommands(commandsBuff)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
 				if len(cmds) > 0 {
 					for _, c := range cmds {
 						handleCommands(c, &conn, bytesProcessed)
@@ -492,7 +511,11 @@ func handleReplicaConnection(url string, port string) {
 			continue
 		}
 		if handshakeCompleted {
-			commands := ParseCommands(buff[:size])
+			commands, err := ParseCommands(buff[:size])
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
 			for _, c := range commands {
 				handleCommands(c, &conn, bytesProcessed)
 				bytesProcessed += c.getRawBytesLength()
