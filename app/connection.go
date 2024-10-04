@@ -18,7 +18,10 @@ type stream struct {
 
 func handleConn(conn RedisConn) {
 	defer conn.Close()
-	streams := map[string][]stream{}
+	// streamKey => Tid => Sequence => []stream
+	streams := map[string]map[uint64]map[uint64][]stream{}
+	currentTIndex := 0
+	currentSIndex := map[uint64]uint64{}
 	emptyRdbBytes := []byte{
 		0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x31, 0x31, 0xFA, 0x09, 0x72,
 		0x65, 0x64, 0x69, 0x73, 0x2D, 0x76, 0x65, 0x72, 0x05, 0x37, 0x2E, 0x32,
@@ -181,21 +184,49 @@ func handleConn(conn RedisConn) {
 			case XADD:
 				stramKey := args[0]
 				id := args[1]
-				key := args[2]
-				value := args[3]
-				currentStreams := streams[stramKey]
-
+				keyValueArgs := args[2:]
 				if id == "*" {
+					// find sequence and value ourself
+
+					// Tid is Current time
 					tid := time.Now().UnixMilli()
-					var sid uint = 0
-					if len(currentStreams) > 0 {
-						lastStream := currentStreams[len(currentStreams)-1]
-						if lastStream.Tid == uint(tid) {
-							sid = lastStream.Sequence + 1
+
+					// Taking sid from mapping
+					sid := currentSIndex[uint64(tid)]
+					if sid > 0 {
+						sid = sid + 1
+					}
+					ns := stream{
+						Tid: uint(tid),
+					}
+
+					if streams[stramKey] == nil {
+						streams[stramKey] = make(map[uint64]map[uint64][]stream)
+					}
+
+					if streams[stramKey][uint64(tid)] == nil {
+						streams[stramKey][uint64(tid)] = make(map[uint64][]stream)
+					}
+
+					if streams[stramKey][uint64(tid)][sid] == nil {
+						streams[stramKey][uint64(tid)][sid] = []stream{}
+					}
+
+					for i, kv := range keyValueArgs {
+						if i%2 == 0 {
+							ns.key = kv
+						} else {
+							ns.value = kv
+							ns.Sequence = uint(sid)
+							fmt.Println(streams[stramKey][uint64(tid)][sid])
+							streams[stramKey][uint64(tid)][sid] = append(streams[stramKey][uint64(tid)][sid], ns)
+							ns = stream{Tid: uint(tid)}
+							sid++
 						}
 					}
-					streams[stramKey] = append(streams[stramKey], stream{Tid: uint(tid), Sequence: uint(sid), key: key, value: value})
 					id = fmt.Sprintf("%v-%v", tid, sid)
+					currentTIndex = int(tid)
+					currentSIndex[uint64(tid)] = sid - 1
 				} else {
 					splits := strings.Split(id, "-")
 					tidToCheck := splits[0]
@@ -210,41 +241,191 @@ func handleConn(conn RedisConn) {
 						conn.SendError("ERR invalid Id specified in XADD")
 						continue
 					}
+
+					// currentStreams := streams[stramKey][ntidToCheck]
+
 					if sidToCheck == "*" {
-						// Create appropriate sequence id
-						if len(currentStreams) > 0 {
-							lastPair := streams[stramKey][len(streams[stramKey])-1]
-							tid := lastPair.Tid
-							sid := lastPair.Sequence
-							if tid == uint(ntidToCheck) {
-								streams[stramKey] = append(streams[stramKey], stream{Tid: uint(ntidToCheck), Sequence: sid + 1, key: key, value: value})
-								id = fmt.Sprintf("%v-%v", ntidToCheck, sid+1)
-							} else {
-								streams[stramKey] = append(streams[stramKey], stream{Tid: uint(ntidToCheck), Sequence: 0, key: key, value: value})
-								id = fmt.Sprintf("%v-%v", ntidToCheck, 0)
+						// Get sid ourself, but tid is given so validate it first
+						if ntidToCheck >= uint64(currentTIndex) {
+							// TID is higher then or equal to the Last Acknowledged TID So that is OK
+							sequence := currentSIndex[ntidToCheck]
+							if ntidToCheck == 0 && sequence == 0 {
+								sequence = 1
 							}
+							ns := stream{
+								Tid: uint(ntidToCheck),
+							}
+
+							if streams[stramKey] == nil {
+								streams[stramKey] = make(map[uint64]map[uint64][]stream)
+							}
+
+							if streams[stramKey][uint64(ntidToCheck)] == nil {
+								streams[stramKey][uint64(ntidToCheck)] = make(map[uint64][]stream)
+							}
+
+							if streams[stramKey][uint64(ntidToCheck)][nsidToCheck] == nil {
+								streams[stramKey][uint64(ntidToCheck)][nsidToCheck] = []stream{}
+							}
+
+							for i, kv := range keyValueArgs {
+								if i%2 == 0 {
+									ns.key = kv
+								} else {
+									ns.value = kv
+									ns.Sequence = uint(sequence)
+									streams[stramKey][uint64(ntidToCheck)][sequence] = append(streams[stramKey][uint64(ntidToCheck)][sequence], ns)
+									ns = stream{Tid: uint(ntidToCheck)}
+									sequence++
+								}
+							}
+							id = fmt.Sprintf("%v-%v", ntidToCheck, sequence)
+							currentTIndex = int(ntidToCheck)
+							currentSIndex[uint64(currentTIndex)] = sequence - 1
 						} else {
-							streams[stramKey] = append(streams[stramKey], stream{Tid: uint(ntidToCheck), Sequence: 1, key: key, value: value})
-							id = fmt.Sprintf("%v-%v", ntidToCheck, 1)
+							conn.SendError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+							continue
 						}
 					} else {
+						// Both are given so validate both
 						if nsidToCheck, err = strconv.ParseUint(sidToCheck, 10, 64); err != nil {
 							conn.SendError("ERR invalid Id specified in XADD")
 							continue
 						}
-						if len(currentStreams) > 0 {
-							lastPair := streams[stramKey][len(streams[stramKey])-1]
-							tid := lastPair.Tid
-							sid := lastPair.Sequence
-							if tid == uint(ntidToCheck) && sid == uint(nsidToCheck) || tid == uint(ntidToCheck) && sid > uint(nsidToCheck) || tid > uint(ntidToCheck) {
-								conn.SendError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-								continue
+						if currentTIndex <= int(ntidToCheck) && nsidToCheck > currentSIndex[uint64(currentTIndex)] {
+							ns := stream{
+								Tid: uint(ntidToCheck),
 							}
+
+							if streams[stramKey] == nil {
+								streams[stramKey] = make(map[uint64]map[uint64][]stream)
+							}
+
+							if streams[stramKey][uint64(ntidToCheck)] == nil {
+								streams[stramKey][uint64(ntidToCheck)] = make(map[uint64][]stream)
+							}
+
+							if streams[stramKey][uint64(ntidToCheck)][nsidToCheck] == nil {
+								streams[stramKey][uint64(ntidToCheck)][nsidToCheck] = []stream{}
+							}
+
+							for i, kv := range keyValueArgs {
+								if i%2 == 0 {
+									ns.key = kv
+								} else {
+									ns.value = kv
+									ns.Sequence = uint(nsidToCheck)
+									streams[stramKey][uint64(ntidToCheck)][nsidToCheck] = append(streams[stramKey][uint64(ntidToCheck)][nsidToCheck], ns)
+									// fmt.Println(streams, "FFF")
+									ns = stream{Tid: uint(ntidToCheck)}
+									nsidToCheck++
+								}
+							}
+							currentTIndex = int(ntidToCheck)
+							currentSIndex[ntidToCheck] = nsidToCheck - 1
+							// fmt.Println(currentSIndex, currentTIndex)
+						} else {
+							conn.SendError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+							continue
 						}
-						streams[stramKey] = append(streams[stramKey], stream{key: key, Tid: uint(ntidToCheck), Sequence: uint(nsidToCheck), value: value})
 					}
 				}
+				// fmt.Println(keyValueArgs)
 				conn.SendMessage(id, BULK_STRING)
+				// XRANGE some_key 1526985054069 1526985054079
+				// 			[
+				//   [
+				//     "1526985054069-0",
+				//     [
+				//       "temperature",
+				//       "36",
+				//       "humidity",
+				//       "95"
+				//     ]
+				//   ],
+				//   [
+				//     "1526985054079-0",
+				//     [
+				//       "temperature",
+				//       "37",
+				//       "humidity",
+				//       "94"
+				//     ]
+				//   ],
+				// ]
+			case XRANGE:
+				key := args[0]
+				start := args[1] // Inclusive
+				end := args[2]   // Inclusive
+				var (
+					startTid int
+					startSid int
+					endTid   int
+					endSid   int
+				)
+				hasStartSequence := strings.Index(start, "-")
+				hasEndSequence := strings.Index(end, "-")
+				if hasEndSequence == -1 {
+					endSid = 0
+					etid, err := strconv.ParseUint(end, 10, 64)
+					if err != nil {
+						conn.SendError("ERR invalid start time received")
+						continue
+					} else {
+						endTid = int(etid)
+					}
+				} else {
+					etid, err := strconv.ParseUint(end[:hasEndSequence], 10, 64)
+					if err != nil {
+						conn.SendError("ERR invalid end time received")
+						continue
+					} else {
+						endTid = int(etid)
+					}
+					esid, err := strconv.ParseUint(end[hasEndSequence+1:], 10, 64)
+					if err != nil {
+						conn.SendError("ERR invalid end time received")
+						continue
+					} else {
+						endSid = int(esid)
+					}
+				}
+
+				if hasStartSequence == -1 {
+					startSid = 0
+					stid, err := strconv.ParseUint(start, 10, 64)
+					if err != nil {
+						conn.SendError("ERR invalid start time received")
+						continue
+					} else {
+						startTid = int(stid)
+					}
+				} else {
+					stid, err := strconv.ParseUint(start[:hasStartSequence], 10, 64)
+					if err != nil {
+						conn.SendError("ERR invalid end time received")
+						continue
+					} else {
+						startTid = int(stid)
+					}
+					stsid, err := strconv.ParseUint(end[hasStartSequence+1:], 10, 64)
+					if err != nil {
+						conn.SendError("ERR invalid end time received")
+						continue
+					} else {
+						startSid = int(stsid)
+					}
+				}
+				currentStreams := streams[key]
+				xRangeArr := []map[string][]stream{}
+
+				startStreams := currentStreams[uint64(startTid)][uint64(startSid)]
+				endStreams := currentStreams[uint64(endTid)][uint64(endSid)]
+				startKey := fmt.Sprintf("%v-%v", startTid, startSid)
+				endKey := fmt.Sprintf("%v-%v", endTid, endSid)
+				xRangeArr = append(xRangeArr, map[string][]stream{startKey: startStreams})
+				xRangeArr = append(xRangeArr, map[string][]stream{endKey: endStreams})
+				fmt.Println(xRangeArr, streams)
 			default:
 				conn.SendError("ERR unsupported Command received")
 			}
