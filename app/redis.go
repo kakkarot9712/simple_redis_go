@@ -312,7 +312,28 @@ func Encode(dec any, spec protospecs) []byte {
 	case ARRAYS:
 		decarr, ok := dec.([]string)
 		if !ok {
-			log.Fatalf("Invalid dec passed! expected array of strings got %T", dec)
+			mapArr, ok := dec.([]map[string][]stream)
+			if !ok {
+				log.Fatalf("Invalid dec passed! expected array of strings got %T", dec)
+			} else {
+				enc := string(ARRAYS) + strconv.Itoa(len(mapArr)) + "\r\n"
+				for _, m := range mapArr {
+					// fmt.Println(m, "MAP")
+					for k, v := range m {
+						encm := string(ARRAYS) + strconv.Itoa(len(m)*2) + "\r\n"
+						fmt.Println(k, v, "MAP")
+						encm += string(Encode(k, BULK_STRING))
+						keyValArr := []string{}
+						for _, s := range v {
+							keyValArr = append(keyValArr, s.key)
+							keyValArr = append(keyValArr, s.value)
+						}
+						encm += string(Encode(keyValArr, ARRAYS))
+						enc += encm
+					}
+				}
+				return []byte(enc)
+			}
 		}
 		enc := string(ARRAYS) + strconv.Itoa(len(decarr)) + "\r\n"
 		for _, d := range decarr {

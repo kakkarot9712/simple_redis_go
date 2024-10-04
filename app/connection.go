@@ -193,11 +193,12 @@ func handleConn(conn RedisConn) {
 
 					// Taking sid from mapping
 					sid := currentSIndex[uint64(tid)]
-					if sid > 0 {
+					if sid > 0 || (len(streams[stramKey][uint64(tid)][sid]) > 0 && sid == 0) {
 						sid = sid + 1
 					}
 					ns := stream{
-						Tid: uint(tid),
+						Tid:      uint(tid),
+						Sequence: uint(sid),
 					}
 
 					if streams[stramKey] == nil {
@@ -217,16 +218,18 @@ func handleConn(conn RedisConn) {
 							ns.key = kv
 						} else {
 							ns.value = kv
-							ns.Sequence = uint(sid)
 							fmt.Println(streams[stramKey][uint64(tid)][sid])
 							streams[stramKey][uint64(tid)][sid] = append(streams[stramKey][uint64(tid)][sid], ns)
-							ns = stream{Tid: uint(tid)}
-							sid++
+							ns = stream{Tid: uint(tid), Sequence: uint(sid)}
 						}
 					}
 					id = fmt.Sprintf("%v-%v", tid, sid)
 					currentTIndex = int(tid)
-					currentSIndex[uint64(tid)] = sid - 1
+					if sid == 0 {
+						currentSIndex[uint64(currentTIndex)] = 1
+					} else {
+						currentSIndex[uint64(currentTIndex)] = sid
+					}
 				} else {
 					splits := strings.Split(id, "-")
 					tidToCheck := splits[0]
@@ -253,7 +256,8 @@ func handleConn(conn RedisConn) {
 								sequence = 1
 							}
 							ns := stream{
-								Tid: uint(ntidToCheck),
+								Tid:      uint(ntidToCheck),
+								Sequence: uint(sequence),
 							}
 
 							if streams[stramKey] == nil {
@@ -273,15 +277,17 @@ func handleConn(conn RedisConn) {
 									ns.key = kv
 								} else {
 									ns.value = kv
-									ns.Sequence = uint(sequence)
 									streams[stramKey][uint64(ntidToCheck)][sequence] = append(streams[stramKey][uint64(ntidToCheck)][sequence], ns)
-									ns = stream{Tid: uint(ntidToCheck)}
-									sequence++
+									ns = stream{Tid: uint(ntidToCheck), Sequence: uint(sequence)}
 								}
 							}
 							id = fmt.Sprintf("%v-%v", ntidToCheck, sequence)
 							currentTIndex = int(ntidToCheck)
-							currentSIndex[uint64(currentTIndex)] = sequence - 1
+							if sequence == 0 {
+								currentSIndex[uint64(currentTIndex)] = 1
+							} else {
+								currentSIndex[uint64(currentTIndex)] = sequence
+							}
 						} else {
 							conn.SendError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
 							continue
@@ -294,7 +300,8 @@ func handleConn(conn RedisConn) {
 						}
 						if currentTIndex <= int(ntidToCheck) && nsidToCheck > currentSIndex[uint64(currentTIndex)] {
 							ns := stream{
-								Tid: uint(ntidToCheck),
+								Tid:      uint(ntidToCheck),
+								Sequence: uint(nsidToCheck),
 							}
 
 							if streams[stramKey] == nil {
@@ -314,15 +321,17 @@ func handleConn(conn RedisConn) {
 									ns.key = kv
 								} else {
 									ns.value = kv
-									ns.Sequence = uint(nsidToCheck)
 									streams[stramKey][uint64(ntidToCheck)][nsidToCheck] = append(streams[stramKey][uint64(ntidToCheck)][nsidToCheck], ns)
 									// fmt.Println(streams, "FFF")
-									ns = stream{Tid: uint(ntidToCheck)}
-									nsidToCheck++
+									ns = stream{Tid: uint(ntidToCheck), Sequence: uint(nsidToCheck)}
 								}
 							}
 							currentTIndex = int(ntidToCheck)
-							currentSIndex[ntidToCheck] = nsidToCheck - 1
+							if nsidToCheck == 0 {
+								currentSIndex[ntidToCheck] = 1
+							} else {
+								currentSIndex[ntidToCheck] = nsidToCheck
+							}
 							// fmt.Println(currentSIndex, currentTIndex)
 						} else {
 							conn.SendError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
@@ -408,7 +417,7 @@ func handleConn(conn RedisConn) {
 					} else {
 						startTid = int(stid)
 					}
-					stsid, err := strconv.ParseUint(end[hasStartSequence+1:], 10, 64)
+					stsid, err := strconv.ParseUint(start[hasStartSequence+1:], 10, 64)
 					if err != nil {
 						conn.SendError("ERR invalid end time received")
 						continue
@@ -416,16 +425,24 @@ func handleConn(conn RedisConn) {
 						startSid = int(stsid)
 					}
 				}
-				currentStreams := streams[key]
 				xRangeArr := []map[string][]stream{}
-
-				startStreams := currentStreams[uint64(startTid)][uint64(startSid)]
-				endStreams := currentStreams[uint64(endTid)][uint64(endSid)]
-				startKey := fmt.Sprintf("%v-%v", startTid, startSid)
-				endKey := fmt.Sprintf("%v-%v", endTid, endSid)
-				xRangeArr = append(xRangeArr, map[string][]stream{startKey: startStreams})
-				xRangeArr = append(xRangeArr, map[string][]stream{endKey: endStreams})
-				fmt.Println(xRangeArr, streams)
+				tid := startTid
+				sid := startSid
+				fmt.Println(tid, sid, endTid, endSid)
+				for tid <= endTid && sid <= endSid {
+					sKey := fmt.Sprintf("%v-%v", tid, sid)
+					currentStrams := streams[key][uint64(tid)][uint64(sid)]
+					if len(currentStrams) > 0 {
+						xRangeArr = append(xRangeArr, map[string][]stream{sKey: currentStrams})
+					}
+					if currentSIndex[uint64(tid)] > uint64(sid) {
+						sid++
+					} else {
+						tid++
+						sid = 0
+					}
+				}
+				conn.SendMessage(xRangeArr, ARRAYS)
 			default:
 				conn.SendError("ERR unsupported Command received")
 			}
