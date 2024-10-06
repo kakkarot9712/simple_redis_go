@@ -11,6 +11,9 @@ var activeConfig map[config]string
 var storedKeys map[string]Value
 var activeReplicaConn []RedisConn
 
+// streamKey => Tid => Sequence => []stream
+var sd StreamData = StreamData{streams: make(map[string]map[uint64]map[uint64][]stream), tIndexes: []uint64{}, sIndexes: make(map[uint64][]uint64)}
+
 func main() {
 	activeConfig = proccessArgs()
 	storedKeys = loadRedisDB(activeConfig[DIR], activeConfig[DBFILENAME])

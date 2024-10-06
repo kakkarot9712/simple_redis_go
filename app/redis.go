@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -52,6 +53,7 @@ const (
 	TYPE        command = "type"
 	XADD        command = "xadd"
 	XRANGE      command = "xrange"
+	XREAD       command = "xread"
 )
 
 type config string
@@ -91,8 +93,29 @@ var infoMap = map[infoSection]map[string]string{
 	},
 }
 
+type StreamId struct {
+	Tid      uint64
+	Sequence uint64
+	HasTid   bool
+	HasSid   bool
+}
+
+type stream struct {
+	Tid      uint
+	Sequence uint
+	key      string
+	value    string
+}
+
+type StreamData struct {
+	mu       sync.RWMutex
+	streams  map[string]map[uint64]map[uint64][]stream
+	tIndexes []uint64
+	sIndexes map[uint64][]uint64
+}
+
 var SupportedInfoSections = []infoSection{REPLICATION}
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE, XADD, XRANGE}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE, XADD, XRANGE, XREAD}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
@@ -313,15 +336,30 @@ func Encode(dec any, spec protospecs) []byte {
 		decarr, ok := dec.([]string)
 		if !ok {
 			mapArr, ok := dec.([]map[string][]stream)
+			// TODO: refactor map to array encoding
 			if !ok {
-				log.Fatalf("Invalid dec passed! expected array of strings got %T", dec)
+				mapArr, ok := dec.([]map[string][]map[string][]stream)
+				if !ok {
+					log.Fatalf("Invalid dec passed! expected array of strings got %T", dec)
+				}
+				enc := string(ARRAYS) + strconv.Itoa(len(mapArr)) + "\r\n"
+				for _, m := range mapArr {
+					for k, v := range m {
+						encm := string(ARRAYS) + strconv.Itoa(len(m)*2) + "\r\n"
+						// fmt.Println(k, v, "MAP")
+						encm += string(Encode(k, BULK_STRING))
+						encm += string(Encode(v, ARRAYS))
+						enc += encm
+					}
+				}
+				return []byte(enc)
 			} else {
 				enc := string(ARRAYS) + strconv.Itoa(len(mapArr)) + "\r\n"
 				for _, m := range mapArr {
 					// fmt.Println(m, "MAP")
 					for k, v := range m {
 						encm := string(ARRAYS) + strconv.Itoa(len(m)*2) + "\r\n"
-						fmt.Println(k, v, "MAP")
+						// fmt.Println(k, v, "MAP")
 						encm += string(Encode(k, BULK_STRING))
 						keyValArr := []string{}
 						for _, s := range v {
@@ -544,5 +582,49 @@ func handleReplicaConnection(url string, port string) {
 			}
 		}
 		// +FULLRESYNC
+	}
+}
+
+func ParseStreamIdFromIdKey(id string) (StreamId, error) {
+	sid := StreamId{}
+	dashIndex := strings.Index(id, "-")
+	if dashIndex != -1 {
+		tid, err := strconv.ParseUint(id[:dashIndex], 10, 64)
+		if err != nil {
+			return sid, err
+		} else {
+			sid.HasTid = true
+			sid.Tid = tid
+		}
+		seqid, err := strconv.ParseUint(id[dashIndex+1:], 10, 64)
+		if err != nil {
+			return sid, err
+		} else {
+			sid.HasSid = true
+			sid.Sequence = seqid
+		}
+	} else {
+		tid, err := strconv.ParseUint(id, 10, 64)
+		if err != nil {
+			return sid, err
+		} else {
+			sid.HasTid = true
+			sid.Tid = tid
+		}
+	}
+	return sid, nil
+}
+
+func initializeStream(streamkey string, tid int, sid int) {
+	if sd.streams[streamkey] == nil {
+		sd.streams[streamkey] = make(map[uint64]map[uint64][]stream)
+	}
+
+	if sd.streams[streamkey][uint64(tid)] == nil {
+		sd.streams[streamkey][uint64(tid)] = make(map[uint64][]stream)
+	}
+
+	if sd.streams[streamkey][uint64(tid)][uint64(sid)] == nil {
+		sd.streams[streamkey][uint64(tid)][uint64(sid)] = []stream{}
 	}
 }
