@@ -75,7 +75,7 @@ The following Redis commands are implemented in this project:
 8. `REPLCONF`: Configure replication settings
 9. `PSYNC`: Internal command used for replication
 10. `TYPE`: Get type of key, which can be `string`, `stream` or `none`
-11. `XADD`: Add a streams storage
+11. `XADD`: Add key-value(s) to a streams storage
 12. `XRANGE`: Get all streams within two id range
 13. `XREAD`: Read multiple streams of specific ids. supports normal lookup and `blocking` lookup
 
