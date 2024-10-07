@@ -56,6 +56,7 @@ const (
 	INCR        command = "incr"
 	MULTI       command = "multi"
 	EXEC        command = "exec"
+	DISCARD     command = "discard"
 )
 
 type config string
@@ -102,8 +103,13 @@ type StreamId struct {
 	HasSid   bool
 }
 
+type TransactionResult struct {
+	Value any
+	Error string
+}
+
 var SupportedInfoSections = []infoSection{REPLICATION}
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE, XADD, XRANGE, XREAD, INCR, MULTI, EXEC}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE, XADD, XRANGE, XREAD, INCR, MULTI, EXEC, DISCARD}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
@@ -328,19 +334,40 @@ func Encode(dec any, spec protospecs) []byte {
 			if !ok {
 				mapArr, ok := dec.([]map[string][]map[string][]stream)
 				if !ok {
-					log.Fatalf("Invalid dec passed! expected array of strings got %T", dec)
-				}
-				enc := string(ARRAYS) + strconv.Itoa(len(mapArr)) + "\r\n"
-				for _, m := range mapArr {
-					for k, v := range m {
-						encm := string(ARRAYS) + strconv.Itoa(len(m)*2) + "\r\n"
-						// fmt.Println(k, v, "MAP")
-						encm += string(Encode(k, BULK_STRING))
-						encm += string(Encode(v, ARRAYS))
-						enc += encm
+					tArr, ok := dec.([]TransactionResult)
+					if !ok {
+						log.Fatalf("Invalid dec passed! expected array of strings got %T", dec)
+					} else {
+						// Its mixed types array
+						enc := string(ARRAYS) + fmt.Sprintf("%v", len(tArr)) + "\r\n"
+						for _, v := range tArr {
+							if v.Error != "" {
+								enc += string(Encode(v.Error, SIMPLE_ERRORS))
+							} else {
+								s, ok := v.Value.(int)
+								if !ok {
+									// Its string
+									enc += string(Encode(v.Value, BULK_STRING))
+								} else {
+									enc += string(Encode(s, INTEGER))
+								}
+							}
+						}
+						return []byte(enc)
 					}
+				} else {
+					enc := string(ARRAYS) + strconv.Itoa(len(mapArr)) + "\r\n"
+					for _, m := range mapArr {
+						for k, v := range m {
+							encm := string(ARRAYS) + strconv.Itoa(len(m)*2) + "\r\n"
+							// fmt.Println(k, v, "MAP")
+							encm += string(Encode(k, BULK_STRING))
+							encm += string(Encode(v, ARRAYS))
+							enc += encm
+						}
+					}
+					return []byte(enc)
 				}
-				return []byte(enc)
 			} else {
 				enc := string(ARRAYS) + strconv.Itoa(len(mapArr)) + "\r\n"
 				for _, m := range mapArr {

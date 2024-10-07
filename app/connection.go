@@ -83,8 +83,13 @@ func handleConn(conn RedisConn) {
 					}()
 				}
 			case GET:
-				value := getValueFromDB(args[0])
-				conn.SendMessage(value, BULK_STRING)
+				if multiEnabled {
+					commandQueue = append(commandQueue, rcmd)
+					conn.SendMessage("QUEUED", BULK_STRING)
+				} else {
+					value := getValueFromDB(args[0])
+					conn.SendMessage(value, BULK_STRING)
+				}
 			case CONFIG:
 				if len(args) == 0 {
 					conn.SendError("ERR wrong number of args for `config` command")
@@ -661,43 +666,37 @@ func handleConn(conn RedisConn) {
 				} else {
 					if len(commandQueue) == 0 {
 						conn.SendMessage([]string{}, ARRAYS)
-					}
-
-					type Answer struct {
-						Value any
-						Error string
-					}
-
-					answers := []Answer{}
-
-					// Execute queued commands
-					for _, cmd := range commandQueue {
-						switch cmd.cmd {
-						case SET:
-							setValueToDB(cmd.args)
-							answers = append(answers, Answer{Value: "OK"})
-						case INCR:
-							num, err := IncrementKey(cmd.args[0])
-							if err != nil {
-								answers = append(answers, Answer{Error: err.Error()})
-							} else {
-								answers = append(answers, Answer{Value: num})
+					} else {
+						answers := []TransactionResult{}
+						// Execute queued commands
+						for _, cmd := range commandQueue {
+							switch cmd.cmd {
+							case SET:
+								setValueToDB(cmd.args)
+								answers = append(answers, TransactionResult{Value: "OK"})
+							case INCR:
+								num, err := IncrementKey(cmd.args[0])
+								if err != nil {
+									answers = append(answers, TransactionResult{Error: err.Error()})
+								} else {
+									answers = append(answers, TransactionResult{Value: num})
+								}
+							case GET:
+								val := getValueFromDB(cmd.args[0])
+								answers = append(answers, TransactionResult{Value: val})
 							}
 						}
+						conn.SendMessage(answers, ARRAYS)
 					}
-					// for _, ans := range answers {
-					// 	if ans.Error != "" {
-					// 		conn.SendError(ans.Error)
-					// 	} else {
-					// 		sv, ok := ans.Value.(string)
-					// 		if ok {
-					// 			conn.SendMessage(sv, BULK_STRING)
-					// 		} else {
-					// 			conn.SendMessage(sv, INTEGER)
-					// 		}
-					// 	}
-					// }
 					multiEnabled = false
+				}
+			case DISCARD:
+				if multiEnabled {
+					commandQueue = []redisCommand{}
+					multiEnabled = false
+					conn.WriteOK()
+				} else {
+					conn.SendError("ERR DISCARD without MULTI")
 				}
 			default:
 				conn.SendError("ERR unsupported Command received")
