@@ -6,11 +6,28 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
+type stream struct {
+	Tid      uint
+	Sequence uint
+	key      string
+	value    string
+}
+
+type StreamData struct {
+	mu       sync.RWMutex
+	streams  map[string]map[uint64]map[uint64][]stream
+	tIndexes []uint64
+	sIndexes map[uint64][]uint64
+}
+
 func handleConn(conn RedisConn) {
 	defer conn.Close()
+	multiEnabled := false
+	commandQueue := []redisCommand{}
 	emptyRdbBytes := []byte{
 		0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x31, 0x31, 0xFA, 0x09, 0x72,
 		0x65, 0x64, 0x69, 0x73, 0x2D, 0x76, 0x65, 0x72, 0x05, 0x37, 0x2E, 0x32,
@@ -46,20 +63,25 @@ func handleConn(conn RedisConn) {
 				msg := strings.Join(args, " ")
 				conn.SendMessage(msg, BULK_STRING)
 			case SET:
-				setValueToDB(args)
-				conn.WriteOK()
-				go func() {
-					if infoMap[REPLICATION]["role"] == "master" {
-						commands := []string{string(SET)}
-						commands = append(commands, args...)
-						for _, conn := range activeReplicaConn {
-							_, err := conn.SendMessage(commands, ARRAYS)
-							if err != nil {
-								fmt.Println("replica propagation failed!")
+				if multiEnabled {
+					commandQueue = append(commandQueue, rcmd)
+					conn.SendMessage("QUEUED", BULK_STRING)
+				} else {
+					setValueToDB(args)
+					conn.WriteOK()
+					go func() {
+						if infoMap[REPLICATION]["role"] == "master" {
+							commands := []string{string(SET)}
+							commands = append(commands, args...)
+							for _, conn := range activeReplicaConn {
+								_, err := conn.SendMessage(commands, ARRAYS)
+								if err != nil {
+									fmt.Println("replica propagation failed!")
+								}
 							}
 						}
-					}
-				}()
+					}()
+				}
 			case GET:
 				value := getValueFromDB(args[0])
 				conn.SendMessage(value, BULK_STRING)
@@ -161,9 +183,9 @@ func handleConn(conn RedisConn) {
 				key := args[0]
 				value := getValueFromDB(key)
 				if value == "" {
-					sd.mu.RLock()
+					sd.mu.Lock()
 					val := sd.streams[key]
-					sd.mu.RUnlock()
+					sd.mu.Unlock()
 					if len(val) > 0 {
 						conn.SendMessage("stream", SIMPLE_STRING)
 					} else {
@@ -176,6 +198,9 @@ func handleConn(conn RedisConn) {
 				stramKey := args[0]
 				id := args[1]
 				keyValueArgs := args[2:]
+
+				// streamId := StreamId{}
+
 				addKeyValuesToStream := func(tid uint64, sid uint64, streamKey string) {
 					ns := stream{
 						Tid:      uint(tid),
@@ -272,6 +297,12 @@ func handleConn(conn RedisConn) {
 								if ntidToCheck != uint64(lastTIndex) {
 									sd.tIndexes = append(sd.tIndexes, ntidToCheck)
 								}
+								// currentTIndex = int(ntidToCheck)
+								// if sequence == 0 {
+								// 	currentSIndex[uint64(ntidToCheck)] = 1
+								// } else {
+								// 	currentSIndex[uint64(ntidToCheck)] = sequence
+								// }
 								conn.SendMessage(id, BULK_STRING)
 							} else {
 								conn.SendError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
@@ -318,6 +349,45 @@ func handleConn(conn RedisConn) {
 						}()
 					}
 				}
+				// fmt.Println(keyValueArgs)
+
+				// XRANGE some_key 1526985054069 1526985054079
+				// 			[
+				//   [
+				//     "1526985054069-0",
+				//     [
+				//       "temperature",
+				//       "36",
+				//       "humidity",
+				//       "95"
+				//     ]
+				//   ],
+				//   [
+				//     "1526985054079-0",
+				//     [
+				//       "temperature",
+				//       "37",
+				//       "humidity",
+				//       "94"
+				//     ]
+				//   ],
+				// ]
+				// 				[
+				//   [
+				//     "some_key",
+				//     [
+				//       [
+				//         "1526985054079-0",
+				//         [
+				//           "temperature",
+				//           "37",
+				//           "humidity",
+				//           "94"
+				//         ]
+				//       ]
+				//     ]
+				//   ]
+				// ]
 			case XRANGE:
 				key := args[0]
 				start := args[1] // Inclusive
@@ -563,6 +633,71 @@ func handleConn(conn RedisConn) {
 					//
 				} else {
 					conn.SendError("ERR invalid type passed: supported type streams, block")
+				}
+			case INCR:
+				if len(args) == 0 {
+					conn.SendError("ERR insufficient args passed to command INCR")
+					continue
+				}
+				if multiEnabled {
+					commandQueue = append(commandQueue, rcmd)
+					conn.SendMessage("QUEUED", BULK_STRING)
+					continue
+				}
+				key := args[0]
+				newVal, err := IncrementKey(key)
+				if err != nil {
+					conn.SendError(err.Error())
+				} else {
+					conn.SendMessage(newVal, INTEGER)
+				}
+
+			case MULTI:
+				multiEnabled = true
+				conn.WriteOK()
+			case EXEC:
+				if !multiEnabled {
+					conn.SendError("ERR EXEC without MULTI")
+				} else {
+					if len(commandQueue) == 0 {
+						conn.SendMessage([]string{}, ARRAYS)
+					}
+
+					type Answer struct {
+						Value any
+						Error string
+					}
+
+					answers := []Answer{}
+
+					// Execute queued commands
+					for _, cmd := range commandQueue {
+						switch cmd.cmd {
+						case SET:
+							setValueToDB(cmd.args)
+							answers = append(answers, Answer{Value: "OK"})
+						case INCR:
+							num, err := IncrementKey(cmd.args[0])
+							if err != nil {
+								answers = append(answers, Answer{Error: err.Error()})
+							} else {
+								answers = append(answers, Answer{Value: num})
+							}
+						}
+					}
+					// for _, ans := range answers {
+					// 	if ans.Error != "" {
+					// 		conn.SendError(ans.Error)
+					// 	} else {
+					// 		sv, ok := ans.Value.(string)
+					// 		if ok {
+					// 			conn.SendMessage(sv, BULK_STRING)
+					// 		} else {
+					// 			conn.SendMessage(sv, INTEGER)
+					// 		}
+					// 	}
+					// }
+					multiEnabled = false
 				}
 			default:
 				conn.SendError("ERR unsupported Command received")

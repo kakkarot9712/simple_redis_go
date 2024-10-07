@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -54,6 +53,9 @@ const (
 	XADD        command = "xadd"
 	XRANGE      command = "xrange"
 	XREAD       command = "xread"
+	INCR        command = "incr"
+	MULTI       command = "multi"
+	EXEC        command = "exec"
 )
 
 type config string
@@ -100,22 +102,8 @@ type StreamId struct {
 	HasSid   bool
 }
 
-type stream struct {
-	Tid      uint
-	Sequence uint
-	key      string
-	value    string
-}
-
-type StreamData struct {
-	mu       sync.RWMutex
-	streams  map[string]map[uint64]map[uint64][]stream
-	tIndexes []uint64
-	sIndexes map[uint64][]uint64
-}
-
 var SupportedInfoSections = []infoSection{REPLICATION}
-var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE, XADD, XRANGE, XREAD}
+var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE, XADD, XRANGE, XREAD, INCR, MULTI, EXEC}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
 var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
@@ -626,5 +614,34 @@ func initializeStream(streamkey string, tid int, sid int) {
 
 	if sd.streams[streamkey][uint64(tid)][uint64(sid)] == nil {
 		sd.streams[streamkey][uint64(tid)][uint64(sid)] = []stream{}
+	}
+}
+
+func IncrementKey(key string) (int, error) {
+	value := getValueFromDB(key)
+	if value == "" {
+		ok := setValueToDB([]string{key, "1"})
+		if ok {
+			return 1, nil
+			// conn.SendMessage(1, INTEGER)
+		} else {
+			return 0, errors.New("ERR something went wrong while INCR " + key)
+			// conn.SendError()
+		}
+	} else {
+		num, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, errors.New("ERR value is not an integer or out of range")
+			// conn.SendError("ERR value is not an integer or out of range")
+			// continue
+		}
+		ok := setValueToDB([]string{key, fmt.Sprintf("%v", num+1)})
+		if ok {
+			return int(num + 1), nil
+			// conn.SendMessage(int(num+1), INTEGER)
+		} else {
+			return 0, errors.New("ERR something went wrong while INCR " + key)
+			// conn.SendError("ERR something went wrong while INCR " + key)
+		}
 	}
 }
