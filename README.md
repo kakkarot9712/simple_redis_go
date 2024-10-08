@@ -1,6 +1,6 @@
 # Simple Redis
 
-This project is a simplified Redis clone implemented in Go, created as part of the CodeCrafters "Build Your Own Redis" challenge. It supports a subset of Redis commands and provides basic functionality for key-value storage and retrieval.
+This project is a simplified Redis clone implemented in Go, created as part of the CodeCrafters "Build Your Own Redis" challenge. It supports a subset of Redis commands and provides basic functionality for key-value storage and retrieval along with several redis features as described below.
 
 ## Supported Features
 
