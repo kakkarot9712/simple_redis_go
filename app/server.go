@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -16,7 +17,12 @@ var sd StreamData = StreamData{streams: make(map[string]map[uint64]map[uint64][]
 
 func main() {
 	activeConfig = proccessArgs()
-	storedKeys = loadRedisDB(activeConfig[DIR], activeConfig[DBFILENAME])
+	keys, err := loadRedisDB(activeConfig[DIR], activeConfig[DBFILENAME])
+	if err != nil {
+		log.Printf("error while restoring db: %v, skipped restoration", err.Error())
+		storedKeys = make(map[string]Value)
+	}
+	storedKeys = keys
 	activeReplicaConn = []RedisConn{}
 
 	l, err := net.Listen("tcp", "0.0.0.0:"+activeConfig[PORT])

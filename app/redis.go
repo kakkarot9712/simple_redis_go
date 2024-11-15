@@ -112,7 +112,7 @@ var SupportedInfoSections = []infoSection{REPLICATION}
 var SupportedCommands = []command{PING, ECHO, SET, GET, CONFIG, KEYS, INFO, REPLCONF, PSYNC, WAIT, TYPE, XADD, XRANGE, XREAD, INCR, MULTI, EXEC, DISCARD}
 var SupportedConfigs = []config{DIR, DBFILENAME, PORT, ReplicaOf}
 
-var defaultConfig = map[config]string{DIR: "/tmp/redis-files", DBFILENAME: "dump.rdb", PORT: "6379"}
+var defaultConfig = map[config]string{DIR: "/root/codecrafters-redis-go", DBFILENAME: "dump.rdb", PORT: "6379"}
 
 func proccessArgs() map[config]string {
 	configs := defaultConfig
@@ -128,89 +128,224 @@ func proccessArgs() map[config]string {
 	return configs
 }
 
-func loadRedisDB(filepath string, filename string) map[string]Value {
+func decodeLengthEncodedData(buff *bytes.Reader) (length int, is_int bool) {
+	is_int = false
+	lengthByte, _ := buff.ReadByte()
+	lengthType := lengthByte >> 6
+	if lengthType == 0b00 {
+		length = int(lengthByte & 0b00111111)
+	} else if lengthType == 0b01 {
+		lengthBytes := make([]byte, 2)
+		lengthBytes[0] = lengthByte & 0b00111111
+		lengthBytes[1], _ = buff.ReadByte()
+		length = int(binary.BigEndian.Uint16(lengthBytes))
+	} else if lengthType == 0b10 {
+		lengthBytes := make([]byte, 4)
+		buff.Read(lengthBytes)
+		length = int(binary.BigEndian.Uint32(lengthBytes))
+	} else {
+		is_int = true
+		// Special Encoding
+		intType := lengthByte & 0b00111111
+		if intType == 0 {
+			// 8 bit int
+			length = 1
+		} else if intType == 1 {
+			// 16 bit int
+			length = 2
+			// keyLength = 2
+		} else {
+			// 32 bit int
+			length = 4
+		}
+	}
+	return
+}
+
+func loadRedisDB(filepath string, filename string) (storedKeys map[string]Value, err error) {
 	MagicNumber := "REDIS0011"
-	storedKeys := make(map[string]Value)
-	buffer, err := os.ReadFile(path.Join(filepath, filename))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Println("Database File Open Failed! ignoring...")
-		return storedKeys
+	storedKeys = make(map[string]Value)
+	buffer, e := os.ReadFile(path.Join(filepath, filename))
+	if e != nil && !errors.Is(e, os.ErrNotExist) {
+		err = e
+		return
 	}
 	if len(buffer) == 0 {
-		return storedKeys
+		err = errors.New("no data found")
+		return
 	}
 	if len(buffer) < 9 {
-		fmt.Println("Database corrupted! ignoring...")
-		return storedKeys
+		err = errors.New("database buffer is invalid")
+		return
 	}
 	if string(buffer[:9]) != MagicNumber {
-		fmt.Println("File is not rdb file! ignoring...")
-		return storedKeys
+		err = errors.New("provided file type is unsupported")
+		return
 	}
 
-	// TODO: Perform CRC Checksum of whole file
-	// crcChecksum := buffer[len(buffer)-8:]
-	// fmt.Println(crcChecksum)
+	// Validate Checksum
+	fileEndByte := buffer[len(buffer)-9]
+	expectedCrc := binary.LittleEndian.Uint64(buffer[len(buffer)-8:])
+	if expectedCrc != 0 && fileEndByte == 255 {
+		// CRC is provided
+		currentCrc := ChecksumJones(buffer[:len(buffer)-8])
+		if currentCrc != expectedCrc {
+			err = errors.New("rdb checksum verification failed")
+			return
+		} else {
+			log.Printf("Checksum %v matched with provided one\n", expectedCrc)
+		}
+	} else {
+		log.Println("Checksum is not provided. Skipping Checksum verification")
+	}
 
 	// TODO: Meatdata Section (FA)
 
 	// Find Database index directly
-	databaseIndex := bytes.Index(buffer, []byte{254})
+	databaseIndex := bytes.Index(buffer, []byte{0xFE})
 	if databaseIndex == -1 {
-		return storedKeys
+		err = errors.New("no table index found")
+		return
 	}
 
 	// Database Section (FE)
-	database := buffer[databaseIndex:]
-	// index := database[1]
-	keyValNums := 0
-	if database[2] == 251 {
-		keyValNums = int(database[3])
-		// expiresNum := uint(database[4])
+	databaseBuff := bytes.NewReader(buffer[databaseIndex+1:])
+	index, e := databaseBuff.ReadByte()
+	if e != nil {
+		err = e
+		return
 	}
-	pointer := 5
+	log.Printf("Restoring DB with Index %v", index)
+	keyValNums := 0
+	expiredKeyValNums := 0
+	b, e := databaseBuff.ReadByte()
+	if e != nil {
+		err = e
+	}
+	if b == 0xFB {
+		length, is_int := decodeLengthEncodedData(databaseBuff)
+		if is_int {
+			// Data is int
+			lengthBytes := make([]byte, length)
+			_, e = databaseBuff.Read(lengthBytes)
+			if e != nil {
+				err = e
+				return
+			}
+			if length == 1 {
+				keyValNums = int(lengthBytes[0])
+			} else if length == 2 {
+				keyValNums = int(binary.BigEndian.Uint16(lengthBytes))
+			} else {
+				keyValNums = int(binary.BigEndian.Uint32(lengthBytes))
+			}
+		} else {
+			keyValNums = length
+			// Data is string
+		}
+		length, is_int = decodeLengthEncodedData(databaseBuff)
+		if is_int {
+			// Data is int
+			lengthBytes := make([]byte, length)
+			databaseBuff.Read(lengthBytes)
+			if length == 1 {
+				expiredKeyValNums = int(lengthBytes[0])
+			} else if length == 2 {
+				expiredKeyValNums = int(binary.BigEndian.Uint16(lengthBytes))
+			} else {
+				expiredKeyValNums = int(binary.BigEndian.Uint32(lengthBytes))
+			}
+		} else {
+			expiredKeyValNums = length
+			// Data is string
+		}
+		log.Printf("Total keys with expiry date: %v\n", expiredKeyValNums)
+	}
 	gotKVp := 0
-	key := ""
-	val := Value{}
 	for {
-		b := database[pointer]
-		if database[pointer] == 252 || database[pointer] == 253 {
+		b, e := databaseBuff.ReadByte()
+		if e != nil {
+			err = e
+			return
+		}
+		key := ""
+		val := Value{}
+		if b == 0xFC || b == 0xFD {
 			// key Has expiry
-			if database[pointer] == 252 {
-				pointer++
-				exp := binary.LittleEndian.Uint64(database[pointer : pointer+8])
+			if b == 0xFC {
+				expBytes := make([]byte, 8)
+				_, e := databaseBuff.Read(expBytes)
+				if e != nil {
+					err = e
+					return
+				}
+				exp := binary.LittleEndian.Uint64(expBytes)
 				val.Exp = miliseconds(exp)
-				pointer += 8
 			} else {
-				pointer++
-				exp := binary.LittleEndian.Uint32(database[pointer : pointer+4])
+				expBytes := make([]byte, 4)
+				_, e = databaseBuff.Read(expBytes)
+				if e != nil {
+					err = e
+					return
+				}
+				exp := binary.LittleEndian.Uint32(expBytes)
 				val.Exp = miliseconds(exp * 1000)
-				pointer += 4
 			}
-		} else if b == 0 {
+			b, e = databaseBuff.ReadByte()
+			if e != nil {
+				err = e
+				return
+			}
+		}
+		if b == 0 {
 			// String
-			pointer++
-			keyLengthBits := getOctetFromByte(database[pointer])
-			if keyLengthBits[:2] != "11" {
-				keyLength, newPointer := processPropertyLengthForString(&database, pointer)
-				pointer = newPointer
-				key = string(database[pointer : pointer+int(keyLength)])
-				pointer += int(keyLength)
+			keyLength, is_int := decodeLengthEncodedData(databaseBuff)
+			if is_int {
+				keyBytes := make([]byte, keyLength)
+				_, e = databaseBuff.Read(keyBytes)
+				if e != nil {
+					err = e
+					return
+				}
+				if keyLength == 1 {
+					key = fmt.Sprintf("%v", int(keyBytes[0]))
+				} else if keyLength == 2 {
+					key = fmt.Sprintf("%v", binary.BigEndian.Uint16(keyBytes))
+				} else {
+					key = fmt.Sprintf("%v", binary.BigEndian.Uint32(keyBytes))
+				}
 			} else {
-				keyint, newPointer := processPropertyValueForInt(&database, pointer)
-				key = strconv.Itoa(keyint)
-				pointer = newPointer
+				keyBytes := make([]byte, keyLength)
+				_, e = databaseBuff.Read(keyBytes)
+				if e != nil {
+					err = e
+					return
+				}
+				key = string(keyBytes)
 			}
-			valLenBits := getOctetFromByte(database[pointer])
-			if valLenBits[:2] != "11" {
-				valLength, newPointer := processPropertyLengthForString(&database, pointer)
-				pointer = newPointer
-				val.Data = string(database[pointer : pointer+valLength])
-				pointer += valLength
+			valLength, is_int := decodeLengthEncodedData(databaseBuff)
+			if is_int {
+				valBytes := make([]byte, valLength)
+				_, e = databaseBuff.Read(valBytes)
+				if e != nil {
+					err = e
+					return
+				}
+				if keyLength == 1 {
+					val.Data = fmt.Sprintf("%v", int(valBytes[0]))
+				} else if keyLength == 2 {
+					val.Data = fmt.Sprintf("%v", binary.BigEndian.Uint16(valBytes))
+				} else {
+					val.Data = fmt.Sprintf("%v", binary.BigEndian.Uint32(valBytes))
+				}
 			} else {
-				valInt, newPointer := processPropertyValueForInt(&database, pointer)
-				val.Data = strconv.Itoa(valInt)
-				pointer = newPointer
+				valBytes := make([]byte, valLength)
+				_, e = databaseBuff.Read(valBytes)
+				if e != nil {
+					err = e
+					return
+				}
+				val.Data = string(valBytes)
 			}
 
 			// Omit key-value if it is expired
@@ -219,18 +354,15 @@ func loadRedisDB(filepath string, filename string) map[string]Value {
 			} else {
 				fmt.Println("key with name", key, "is ommited as it was expired")
 			}
-			key = ""
-			val = Value{}
 			gotKVp++
-		} else {
-			pointer++
 		}
 		if b == byte(0xFF) {
 			if gotKVp == keyValNums {
-				return storedKeys
+				return
 			} else {
-				fmt.Println("incomplete Data found, number of keys mistmatch. restore is aborted.")
-				return make(map[string]Value)
+				log.Println("incomplete Data found, number of keys mistmatch. restore is aborted.")
+				storedKeys = make(map[string]Value)
+				return
 			}
 		}
 	}
@@ -268,6 +400,8 @@ func ParseCommand(buffer []byte) (redisCommand, error) {
 		return rcmd, errors.New("unsupported command passed")
 	}
 }
+
+// *2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n
 
 func ParseCommands(buffer []byte) ([]redisCommand, error) {
 	chunks := strings.Split(string(buffer), "*")

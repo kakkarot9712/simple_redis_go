@@ -90,8 +90,10 @@ The following Redis commands are implemented in this project:
 - Replication is partially supported. Though propagation of commands does works, some commands related to command propagation valdation like `WAIT` is not implimented as of now.
 - Server only supports loading RDB file from specified location but does not support RDB File saving using `SAVE` command as of now.
 - This server only supports very limited and basic features.
+- Only RDB with single database and basic key-value storage is supported.
 
 ## Acknowledgments
 
 - CodeCrafters for providing the "Build Your Own Redis" challenge
 - The Redis project for inspiration and documentation
+- HDT3213 for CRC64 Checksum [Jones](https://github.com/HDT3213/rdb/blob/e5a00e130dda889ce1396d5561f95540418d12fc/crc64jones/crc64.go) varient implimentation.
