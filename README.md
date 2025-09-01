@@ -79,10 +79,10 @@ The following Redis commands are implemented in this project:
 <!-- 11. `XADD`: Add key-value(s) to a streams storage -->
 <!-- 12. `XRANGE`: Get all streams within two id range -->
 <!-- 13. `XREAD`: Read multiple streams of specified ids. supports normal lookup and `blocking` lookup -->
-14. `INCR`: Increments integer value of specified key by 1.
-15. `MULTI`: Starts Transaction. By this command all `GET`, `SET` and `INCR` command will be queued without execution
-16. `EXEC`: Executes all queued commands at one by one and returns result of all in an array
-17. `DISCARD`: Discards previously initialized transaction (with `MULTI`).
+10. `INCR`: Increments integer value of specified key by 1.
+11. `MULTI`: Starts Transaction. By this command all `GET`, `SET` and `INCR` command will be queued without execution
+12. `EXEC`: Executes all queued commands at one by one and returns result of all in an array
+13. `DISCARD`: Discards previously initialized transaction (with `MULTI`).
 
 ## Limitations
 
