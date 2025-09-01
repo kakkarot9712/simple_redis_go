@@ -12,7 +12,7 @@
 // - Reflected_Out: True
 // - Xor_Out: 0x0
 // - Check("123456789"): 0xe9c6d914c4b8d9ca
-package main
+package rdb
 
 import (
 	"hash"

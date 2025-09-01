@@ -7,7 +7,7 @@ This project is a simplified Redis clone implemented in Go, created as part of t
 - Basic key/value storage using `GET` and `SET` command with values with expiry time.
 - RDB local database support for persistant storage.
 - Partial Replication support.
-- Basic streams support with `TYPE`, `XADD`, `XREAD` and `XRANGE` commands.
+<!-- - Basic streams support with `TYPE`, `XADD`, `XREAD` and `XRANGE` commands. -->
 - Basic Transaction support with `MULTI`, `INCR`, `EXEC` and `DISCARD` commands.
 
 ## Prerequisites
@@ -75,10 +75,10 @@ The following Redis commands are implemented in this project:
 7. `INFO`: Get information and statistics about the server
 8. `REPLCONF`: Configure replication settings
 9. `PSYNC`: Internal command used for replication
-10. `TYPE`: Get type of key, which can be `string`, `stream` or `none`
-11. `XADD`: Add key-value(s) to a streams storage
-12. `XRANGE`: Get all streams within two id range
-13. `XREAD`: Read multiple streams of specified ids. supports normal lookup and `blocking` lookup
+<!-- 10. `TYPE`: Get type of key, which can be `string`, `stream` or `none` -->
+<!-- 11. `XADD`: Add key-value(s) to a streams storage -->
+<!-- 12. `XRANGE`: Get all streams within two id range -->
+<!-- 13. `XREAD`: Read multiple streams of specified ids. supports normal lookup and `blocking` lookup -->
 14. `INCR`: Increments integer value of specified key by 1.
 15. `MULTI`: Starts Transaction. By this command all `GET`, `SET` and `INCR` command will be queued without execution
 16. `EXEC`: Executes all queued commands at one by one and returns result of all in an array
@@ -87,7 +87,6 @@ The following Redis commands are implemented in this project:
 ## Limitations
 
 - This server does not support `HGET` and `HSET` commands as of now.
-- Replication is partially supported. Though propagation of commands does works, some commands related to command propagation valdation like `WAIT` is not implimented as of now.
 - Server only supports loading RDB file from specified location but does not support RDB File saving using `SAVE` command as of now.
 - This server only supports very limited and basic features.
 - Only RDB with single database and basic key-value storage is supported.
