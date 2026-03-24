@@ -1,4 +1,4 @@
-package types
+package credis
 
 const (
 	BULK_STRING   = "$"

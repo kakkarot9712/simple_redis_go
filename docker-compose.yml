@@ -1,0 +1,23 @@
+services:
+  ccli:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    
+    volumes:
+      - .:/app/redisGo:rw
+
+  redis-server:
+    build:
+      context: ./
+      dockerfile: Dockerfile.Server
+    
+    ports:
+      - "6379:6379"
+
+    networks:
+      - rds
+  
+networks:
+  rds:
+    driver: bridge

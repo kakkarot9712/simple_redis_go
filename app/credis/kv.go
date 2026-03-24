@@ -1,4 +1,4 @@
-package store
+package credis
 
 import (
 	"fmt"
@@ -6,26 +6,22 @@ import (
 	"maps"
 	"sync"
 	"time"
-
-	"github.com/codecrafters-io/redis-starter-go/app/credis/helpers"
-	"github.com/codecrafters-io/redis-starter-go/app/credis/resp/tokens"
-	"github.com/codecrafters-io/redis-starter-go/app/credis/resp/types"
 )
 
 type Value struct {
 	exists    bool
-	data      tokens.Token
+	data      Token
 	createdAt time.Time
 	exp       *time.Time
 }
 
-type BaseStore interface {
+type KVStore interface {
 	ID() string
 	Error() error
-	Get(key string) tokens.Token
-	Set(key string, data tokens.Token, exp *time.Time)
+	Get(key string, currentTime time.Time) Token
+	Set(key string, data Token, exp *time.Time)
 	Keys() iter.Seq[string]
-	Update(key string, data tokens.Token)
+	Update(key string, data Token)
 }
 
 type store struct {
@@ -35,9 +31,9 @@ type store struct {
 	store map[string]Value
 }
 
-func New() BaseStore {
+func NewStore() KVStore {
 	return &store{
-		id:    helpers.GenerateString(6),
+		id:    GenerateString(6),
 		store: make(map[string]Value),
 	}
 }
@@ -50,26 +46,25 @@ func (s *store) Error() error {
 	return s.err
 }
 
-func (s *store) Get(key string) tokens.Token {
+func (s *store) Get(key string, currentTime time.Time) Token {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	val := s.store[key]
 	if !val.exists {
-		return tokens.New(types.BULK_STRING, "")
+		return NewToken(BULK_STRING, "")
 	}
 	if val.exp != nil {
 		// Value with expiry
-		if time.Until(*val.exp) < 0 {
+		if currentTime.After(*val.exp) {
 			// value is expired
 			delete(s.store, key)
-			return tokens.New(types.BULK_STRING, "")
+			return NewToken(BULK_STRING, "")
 		}
-
 	}
 	return s.store[key].data
 }
 
-func (s *store) Set(key string, data tokens.Token, exp *time.Time) {
+func (s *store) Set(key string, data Token, exp *time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	val := Value{
@@ -83,7 +78,7 @@ func (s *store) Set(key string, data tokens.Token, exp *time.Time) {
 	s.store[key] = val
 }
 
-func (s *store) Update(key string, data tokens.Token) {
+func (s *store) Update(key string, data Token) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	val := s.store[key]

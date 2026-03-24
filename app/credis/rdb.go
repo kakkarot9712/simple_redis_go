@@ -1,4 +1,4 @@
-package rdb
+package credis
 
 import (
 	"bufio"
@@ -10,11 +10,19 @@ import (
 	"path"
 	"strconv"
 	"time"
-
-	"github.com/codecrafters-io/redis-starter-go/app/credis/resp/tokens"
-	"github.com/codecrafters-io/redis-starter-go/app/credis/resp/types"
-	"github.com/codecrafters-io/redis-starter-go/app/credis/store"
 )
+
+func WithRDBDir(dir string) ConfigOption {
+	return func(r *config) {
+		r.rdbDir = dir
+	}
+}
+
+func WithRDBFileName(fileName string) ConfigOption {
+	return func(r *config) {
+		r.rdbFileName = fileName
+	}
+}
 
 const (
 	MAGIC_STRING = "REDIS"
@@ -59,7 +67,7 @@ type RDBStore interface {
 	GetRDBDir() string
 	GetRDBFileName() string
 	Load()
-	Restore(str store.BaseStore)
+	Restore(str KVStore)
 	Version() int
 	Error() error
 	GetAuxField(key string) string
@@ -67,10 +75,94 @@ type RDBStore interface {
 
 type StoreProvider interface {
 	Keys() iter.Seq[string]
-	Set(key string, data tokens.Token, expInMs *uint64)
+	Set(key string, data Token, expInMs *uint64)
 }
 
-func New(dir string, dbfilename string) RDBStore {
+func (cfg *rdbStore) string() string {
+	strLen := cfg.length()
+	if strLen == -1 {
+		// Special encoding
+		b, err := cfg.reader.ReadByte()
+		if err != nil {
+			cfg.err = err
+			return ""
+		}
+		switch b & 63 { // 0b00111111
+		case 0:
+			// 8 bit integer
+			num, err := cfg.reader.ReadByte()
+			if err != nil {
+				cfg.err = err
+				return ""
+			}
+			return fmt.Sprintf("%v", num)
+		case 1:
+			// 16 bit integer
+			numBytes := make([]byte, 2)
+			_, err := cfg.reader.Read(numBytes)
+			if err != nil {
+				cfg.err = err
+				return ""
+			}
+			return fmt.Sprintf("%v", binary.BigEndian.Uint16(numBytes))
+		case 2:
+			// 32 bit integer
+			numBytes := make([]byte, 4)
+			_, err := cfg.reader.Read(numBytes)
+			if err != nil {
+				cfg.err = err
+				return ""
+			}
+			return fmt.Sprintf("%v", binary.BigEndian.Uint32(numBytes))
+		default:
+			cfg.err = fmt.Errorf("unsupported encoding format")
+			return ""
+		}
+	}
+	if cfg.err != nil {
+		return ""
+	}
+	strBytes := make([]byte, strLen)
+	_, err := cfg.reader.Read(strBytes)
+	if err != nil {
+		cfg.err = err
+		return ""
+	}
+	return string(strBytes)
+}
+
+func (cfg *rdbStore) length() int {
+	length := 0
+	reader := cfg.reader
+	b, err := reader.ReadByte()
+	if err != nil {
+		cfg.err = err
+		return 0
+	}
+	switch b >> 6 {
+	case 0b00:
+		length = int(b)
+	case 0b01:
+		nextByte, err := reader.ReadByte()
+		if err != nil {
+			cfg.err = err
+			return 0
+		}
+		lenBytes := make([]byte, 2)
+		lenBytes[0] = b & 63 // 0b00111111
+		lenBytes[1] = nextByte
+		length = int(binary.LittleEndian.Uint16(lenBytes))
+	case 0b10:
+		lenBytes := make([]byte, 4)
+		length = int(binary.BigEndian.Uint32(lenBytes))
+	case 0b11:
+		length = -1
+		reader.UnreadByte()
+	}
+	return length
+}
+
+func NewRDB(dir string, dbfilename string) RDBStore {
 	return &rdbStore{
 		dir:        dir,
 		dbFilename: dbfilename,
@@ -115,7 +207,7 @@ func (r *rdbStore) Version() int {
 	return r.version
 }
 
-func (cfg *rdbStore) Restore(str store.BaseStore) {
+func (cfg *rdbStore) Restore(str KVStore) {
 	if cfg.reader == nil {
 		cfg.err = fmt.Errorf("RDB file not loaded! restore skipped")
 		return
@@ -260,12 +352,12 @@ func (cfg *rdbStore) Restore(str store.BaseStore) {
 						) > 0 {
 							str.Set(
 								key,
-								tokens.New(types.BULK_STRING, value),
+								NewToken(BULK_STRING, value),
 								&expTime,
 							)
 						}
 					} else {
-						str.Set(key, tokens.New(types.BULK_STRING, value), nil)
+						str.Set(key, NewToken(BULK_STRING, value), nil)
 					}
 					expiry = 0
 					key = ""

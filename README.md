@@ -7,8 +7,10 @@ This project is a simplified Redis clone implemented in Go, created as part of t
 - Basic key/value storage using `GET` and `SET` command with values with expiry time.
 - RDB local database support for persistant storage.
 - Partial Replication support.
-<!-- - Basic streams support with `TYPE`, `XADD`, `XREAD` and `XRANGE` commands. -->
+- List support with `RPUSH`, `LPUSH`, `LRANGE`, `LLEN`, `LPOP` and `BLPOP` commands.
+- Streams support with `TYPE` and `XADD` commands.
 - Basic Transaction support with `MULTI`, `INCR`, `EXEC` and `DISCARD` commands.
+- Pub/Sub support with `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE` and `PUNSUBSCRIBE` commands.
 
 ## Prerequisites
 
@@ -75,20 +77,31 @@ The following Redis commands are implemented in this project:
 7. `INFO`: Get information and statistics about the server
 8. `REPLCONF`: Configure replication settings
 9. `PSYNC`: Internal command used for replication
-<!-- 10. `TYPE`: Get type of key, which can be `string`, `stream` or `none` -->
-<!-- 11. `XADD`: Add key-value(s) to a streams storage -->
-<!-- 12. `XRANGE`: Get all streams within two id range -->
-<!-- 13. `XREAD`: Read multiple streams of specified ids. supports normal lookup and `blocking` lookup -->
-10. `INCR`: Increments integer value of specified key by 1.
-11. `MULTI`: Starts Transaction. By this command all `GET`, `SET` and `INCR` command will be queued without execution
-12. `EXEC`: Executes all queued commands at one by one and returns result of all in an array
-13. `DISCARD`: Discards previously initialized transaction (with `MULTI`).
+10. `WAIT`: Wait for replica acknowledgements
+11. `TYPE`: Get type of a key (`string`, `stream`, `list`, or `none`)
+12. `INCR`: Increments integer value of specified key by 1
+13. `MULTI`: Starts a transaction — subsequent commands are queued without execution
+14. `EXEC`: Executes all queued commands and returns results as an array
+15. `DISCARD`: Discards a previously initialized transaction (with `MULTI`)
+16. `XADD`: Append an entry to a stream
+17. `RPUSH`: Append one or more values to a list
+18. `LPUSH`: Prepend one or more values to a list
+19. `LRANGE`: Get a range of elements from a list
+20. `LLEN`: Get the length of a list
+21. `LPOP`: Remove and return element(s) from the head of a list
+22. `BLPOP`: Blocking pop from the head of a list
+23. `SUBSCRIBE`: Subscribe to one or more channels
+24. `UNSUBSCRIBE`: Unsubscribe from one or more channels
+<!-- 25. `PSUBSCRIBE`: Subscribe to channels matching a pattern -->
+<!-- 26. `PUNSUBSCRIBE`: Unsubscribe from channels matching a pattern -->
+<!-- 27. `COMMAND`: Get information about Redis commands -->
+25. `QUIT`: Close the connection
 
 ## Limitations
 
-- This server does not support `HGET` and `HSET` commands as of now.
-- Server only supports loading RDB file from specified location but does not support RDB File saving using `SAVE` command as of now.
-- This server only supports very limited and basic features.
+- `HGET` and `HSET` commands are not supported.
+- `XRANGE` and `XREAD` stream commands are not supported; only `XADD` is available.
+- RDB file loading is supported but `SAVE` command (writing RDB) is not.
 - Only RDB with single database and basic key-value storage is supported.
 
 ## Acknowledgments

@@ -1,43 +1,79 @@
-package parser
+package credis
 
 import (
 	"bufio"
 	"fmt"
 	"strconv"
-
-	"github.com/codecrafters-io/redis-starter-go/app/credis/resp/tokens"
-	"github.com/codecrafters-io/redis-starter-go/app/credis/resp/types"
 )
+
+type Token struct {
+	Type    string
+	Literal any
+}
+
+func NewToken(tokenType string, literal any) Token {
+	return Token{
+		Type:    tokenType,
+		Literal: literal,
+	}
+}
+
+func (t *Token) IsPong() bool {
+	return t.IsString() && t.Literal.(string) == "PONG"
+}
+
+func (t *Token) IsOk() bool {
+	return t.IsString() && t.Literal.(string) == "OK"
+}
+
+func (t *Token) IsString() bool {
+	switch t.Type {
+	case SIMPLE_STRING, BULK_STRING:
+		if _, ok := t.Literal.(string); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func IsAllString(args []Token) (bool, int) {
+	for index, arg := range args {
+		if !arg.IsString() {
+			return false, index
+		}
+	}
+	return true, -1
+}
 
 type Parser struct {
 	reader *bufio.Reader
 	err    error
 }
 
-func New(reader *bufio.Reader) *Parser {
+func NewParser(reader *bufio.Reader) *Parser {
 	return &Parser{
 		reader: reader,
 	}
 }
 
-func (p *Parser) TryParse() (tokens.Token, int) {
+func (p *Parser) TryParse() (Token, int) {
 	b, err := p.reader.ReadByte()
 	if err != nil {
 		p.err = err
-		return tokens.Token{}, 0
+		return Token{}, 0
 	}
 	tokenType := string(b)
 	switch tokenType {
-	case types.BULK_STRING:
+	case BULK_STRING:
 		return p.bulkString()
-	case types.SIMPLE_STRING:
+	case SIMPLE_STRING:
 		return p.simpleString()
-	case types.ARRAY:
+	case ARRAY:
 		return p.array()
 	default:
 		p.setBufferInvalidError(fmt.Errorf("invalid character in buffer: %v", string(b)))
 		p.reader.UnreadByte()
-		return tokens.Token{}, 0
+		return Token{}, 0
 	}
 }
 
@@ -64,11 +100,11 @@ func (p *Parser) Error() error {
 	return p.err
 }
 
-func (p *Parser) bulkString() (tokens.Token, int) {
+func (p *Parser) bulkString() (Token, int) {
 	bytesProcessed := 1
 	lenght, bytesConsumed := p.length()
 	if p.err != nil {
-		return tokens.New(types.BULK_STRING, ""), 0
+		return NewToken(BULK_STRING, ""), 0
 	}
 	bytesProcessed += bytesConsumed
 	strBytes := make([]byte, lenght)
@@ -76,40 +112,40 @@ func (p *Parser) bulkString() (tokens.Token, int) {
 	bytesProcessed += n
 	if err != nil {
 		p.err = err
-		return tokens.New(types.BULK_STRING, ""), 0
+		return NewToken(BULK_STRING, ""), 0
 	}
 
 	p.validateEnd()
 	bytesProcessed += 2
 	if p.err != nil {
-		return tokens.New(types.BULK_STRING, ""), 0
+		return NewToken(BULK_STRING, ""), 0
 	}
-	return tokens.New(types.BULK_STRING, string(strBytes)), bytesProcessed
+	return NewToken(BULK_STRING, string(strBytes)), bytesProcessed
 }
 
-func (p *Parser) array() (tokens.Token, int) {
+func (p *Parser) array() (Token, int) {
 	bytesProcessed := 1
 	elementLength, bytesConsumed := p.length()
 	if p.err != nil {
-		return tokens.New(types.ARRAY, []any{}), 0
+		return NewToken(ARRAY, []any{}), 0
 	}
 	bytesProcessed += bytesConsumed
-	elements := make([]tokens.Token, 0)
+	elements := make([]Token, 0)
 	if p.err != nil {
-		return tokens.New(types.ARRAY, elements), 0
+		return NewToken(ARRAY, elements), 0
 	}
 	for range elementLength {
 		t, n := p.TryParse()
 		if p.err != nil {
-			return tokens.New(types.ARRAY, make([]tokens.Token, 0)), 0
+			return NewToken(ARRAY, make([]Token, 0)), 0
 		}
 		elements = append(elements, t)
 		bytesProcessed += n
 	}
-	return tokens.New(types.ARRAY, elements), bytesProcessed
+	return NewToken(ARRAY, elements), bytesProcessed
 }
 
-func (p *Parser) simpleString() (tokens.Token, int) {
+func (p *Parser) simpleString() (Token, int) {
 	bytesProcessed := 1
 	str := ""
 	isLastByte := false
@@ -117,26 +153,26 @@ func (p *Parser) simpleString() (tokens.Token, int) {
 		b, err := p.reader.ReadByte()
 		if err != nil {
 			p.err = err
-			return tokens.New(types.SIMPLE_STRING, ""), 0
+			return NewToken(SIMPLE_STRING, ""), 0
 		}
 		bytesProcessed++
 		if b == '\r' {
 			if isLastByte {
 				p.err = fmt.Errorf("forbidden character received")
-				return tokens.New(types.SIMPLE_STRING, ""), 0
+				return NewToken(SIMPLE_STRING, ""), 0
 			}
 			isLastByte = true
 		} else if b == '\n' {
 			if !isLastByte {
 				p.err = fmt.Errorf("unexpected end of stream")
-				return tokens.New(types.SIMPLE_STRING, ""), 0
+				return NewToken(SIMPLE_STRING, ""), 0
 			}
 			break
 		} else {
 			str += string(b)
 		}
 	}
-	return tokens.New(types.SIMPLE_STRING, str), bytesProcessed
+	return NewToken(SIMPLE_STRING, str), bytesProcessed
 }
 
 func (p *Parser) length() (int, int) {

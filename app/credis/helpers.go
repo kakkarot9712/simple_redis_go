@@ -1,7 +1,8 @@
-package helpers
+package credis
 
 import (
 	"math/rand"
+	"strings"
 )
 
 func GenerateString(size uint) string {
@@ -9,10 +10,10 @@ func GenerateString(size uint) string {
 		return ""
 	}
 	allowedChars := "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	str := ""
+	var str strings.Builder
 	for range size {
 		index := rand.Intn(int(len(allowedChars)))
-		str += string(allowedChars[index])
+		str.WriteString(string(allowedChars[index]))
 	}
-	return str
+	return str.String()
 }

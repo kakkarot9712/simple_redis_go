@@ -2,97 +2,121 @@ package credis
 
 import (
 	"fmt"
-	"net"
+	"io"
 	"sync"
-
-	"github.com/codecrafters-io/redis-starter-go/app/credis/executor"
-	"github.com/codecrafters-io/redis-starter-go/app/credis/helpers"
-	"github.com/codecrafters-io/redis-starter-go/app/credis/resp/tokens"
+	"time"
 )
 
 const WORKERS_LIMIT = 6
 
+type WaitingArea struct {
+	queue map[string][]BLPOPHold
+	mu    sync.Mutex
+}
+
+var keyUpdatesChan = make(chan string, WORKERS_LIMIT)
+
+var waitingArea = WaitingArea{
+	queue: make(map[string][]BLPOPHold),
+}
+
 type Hub struct {
-	Send    chan<- Conn
-	receive <-chan Conn
-	wg      sync.WaitGroup
-}
-
-type ParserProvider interface {
-	TryParse() (tokens.Token, int)
-	Error() error
-}
-
-type Encoder interface {
-	Error() error
-	Bytes() []byte
-	Array(args []tokens.Token)
-	BulkString(data string)
-	SimpleString(data string)
-	Integer(data int)
-	SimpleError(err string)
-	ArrayRaw(rawData [][]byte)
-}
-
-type ExecutorProvider interface {
-	Error() error
+	RequestChan chan Request
+	wg          sync.WaitGroup
+	executor    Executor
+	replHandler ReplicaHandler
 }
 
 type ReplicaHandler interface {
-	AddToReplicaGroup(conn Conn)
-	PropagateToReplicaGroup(tokens ...tokens.Token)
+	AddToReplicaGroup(id string, conn io.Writer)
+	PropagateToReplicaGroup(cmd string, args ...Token)
 	IsPartOfReplicaGroup(id string) bool
-	RemoveFromReplicaLGroup(id string)
+	RemoveFromReplicaGroup(id string)
 }
 
 func NewHub() *Hub {
-	handler := make(chan Conn, WORKERS_LIMIT)
+	handler := make(chan Request, WORKERS_LIMIT)
 	return &Hub{
-		Send:    handler,
-		receive: handler,
+		RequestChan: handler,
 	}
 }
 
-func (h *Hub) Start() {
-	for range WORKERS_LIMIT {
-		h.wg.Add(1)
-		go func() {
-			for c := range h.receive {
-				handle(c)
+func (h *Hub) StartWorker() {
+	h.wg.Add(1)
+	for {
+		select {
+		case req, ok := <-h.RequestChan:
+			if !ok {
+				h.wg.Done()
+				break
 			}
-			// for {
-			// 	select {
-			// 	case c, ok := <-h.receive:
-			// 		if !ok {
-			// 			break loop
-			// 		}
-			// 		handle(c.Conn)
-			// 	default:
-			// 		// Worker Idle
-			// 		fmt.Println("Worker Idle")
-			// 	}
+			out := h.executor.Exec(req)
+			if h.executor.Error() != nil {
+				// Something is wrong
+				fmt.Println("error while execution: ", h.executor.Error())
+			}
+			spec := req.Cmd()
+			if spec, ok := spec.(*BLPOPSpecs); ok && !spec.Concluded {
+				continue
+			}
+			req.Receive() <- &response{
+				data: out,
+			}
+			// Propagate to replicas
+			cmd := req.Cmd().String()
+			args := req.Args()
+			switch cmd {
+			case SET, INCR:
+				h.replHandler.PropagateToReplicaGroup(cmd, args...)
+			}
+
+			// TODO: Fix Replica Logic
+			// if h.executor.VerifiedReplica() && !h.replHandler.IsPartOfReplicaGroup(req.Id()) {
+			// 	h.replHandler.AddToReplicaGroup(req.Id(), req)
 			// }
-			h.wg.Done()
-		}()
+		case key := <-keyUpdatesChan:
+			// Key has been updated! check for blocked clients
+			waitingArea.mu.Lock()
+			for len(waitingArea.queue[key]) > 0 {
+				concluded, out := h.executor.processHold(&waitingArea.queue[key][0])
+				if !concluded {
+					break
+				}
+				if len(out) > 0 {
+					waitingArea.queue[key][0].req.Receive() <- &response{
+						data: out,
+					}
+				}
+				if len(waitingArea.queue[key]) > 1 {
+					waitingArea.queue[key] = waitingArea.queue[key][1:]
+				} else {
+					delete(waitingArea.queue, key)
+				}
+				ls := h.executor.LStore()
+				if ls.Len(key) == 0 {
+					break
+				}
+			}
+			waitingArea.mu.Unlock()
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (h *Hub) Start(
+	executor Executor,
+	replHandler ReplicaHandler,
+) {
+	h.executor = executor
+	h.replHandler = replHandler
+	for range WORKERS_LIMIT {
+		go h.StartWorker()
 	}
 }
 
 func (h *Hub) Shutdown() {
+	close(h.RequestChan)
 	fmt.Println("Waiting for unfinished jobs")
 	h.wg.Wait()
-}
-
-func (h *Hub) SendConn(
-	conn net.Conn,
-	parser ParserProvider,
-	exec executor.Executor,
-	replHandler ReplicaHandler,
-) {
-	h.Send <- Conn{
-		Id:          helpers.GenerateString(10),
-		Conn:        conn,
-		Parser:      parser,
-		Executor:    exec,
-		replHandler: replHandler,
-	}
 }
