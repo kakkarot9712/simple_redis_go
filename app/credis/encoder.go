@@ -51,7 +51,8 @@ func (e *Encoder) EncodeToken(t Token) {
 	}
 	switch t.Type {
 	case BULK_STRING:
-		e.BulkString(t.Literal.(string))
+		t, _ := t.Literal.(string)
+		e.BulkString(&t)
 	case SIMPLE_STRING:
 		e.SimpleString(t.Literal.(string))
 	case INTEGER:
@@ -84,17 +85,17 @@ func (e *Encoder) Array(args ...Token) *Encoder {
 	return e
 }
 
-func (e *Encoder) BulkString(data string) *Encoder {
+func (e *Encoder) BulkString(data *string) *Encoder {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
 		return e
 	}
-	if data == "" {
+	if data == nil {
 		// Null bulk string
 		_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n", BULK_STRING, -1)
 		return e
 	}
-	_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n%v\r\n", BULK_STRING, len(data), data)
+	_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n%v\r\n", BULK_STRING, len(*data), *data)
 	return e
 }
 

@@ -45,18 +45,24 @@ func IsAllString(args []Token) (bool, int) {
 	return true, -1
 }
 
-type Parser struct {
+type Parser interface {
+	TryParse() (Token, int)
+	Error() error
+	ProcessRDB()
+}
+
+type parser struct {
 	reader *bufio.Reader
 	err    error
 }
 
-func NewParser(reader *bufio.Reader) *Parser {
-	return &Parser{
+func NewParser(reader *bufio.Reader) Parser {
+	return &parser{
 		reader: reader,
 	}
 }
 
-func (p *Parser) TryParse() (Token, int) {
+func (p *parser) TryParse() (Token, int) {
 	b, err := p.reader.ReadByte()
 	if err != nil {
 		p.err = err
@@ -77,7 +83,7 @@ func (p *Parser) TryParse() (Token, int) {
 	}
 }
 
-func (p *Parser) ProcessRDB() {
+func (p *parser) ProcessRDB() {
 	b, err := p.reader.ReadByte()
 	if err != nil || b != '$' {
 		p.err = fmt.Errorf("not RDB file")
@@ -96,11 +102,11 @@ func (p *Parser) ProcessRDB() {
 	}
 }
 
-func (p *Parser) Error() error {
+func (p *parser) Error() error {
 	return p.err
 }
 
-func (p *Parser) bulkString() (Token, int) {
+func (p *parser) bulkString() (Token, int) {
 	bytesProcessed := 1
 	lenght, bytesConsumed := p.length()
 	if p.err != nil {
@@ -123,7 +129,7 @@ func (p *Parser) bulkString() (Token, int) {
 	return NewToken(BULK_STRING, string(strBytes)), bytesProcessed
 }
 
-func (p *Parser) array() (Token, int) {
+func (p *parser) array() (Token, int) {
 	bytesProcessed := 1
 	elementLength, bytesConsumed := p.length()
 	if p.err != nil {
@@ -145,7 +151,7 @@ func (p *Parser) array() (Token, int) {
 	return NewToken(ARRAY, elements), bytesProcessed
 }
 
-func (p *Parser) simpleString() (Token, int) {
+func (p *parser) simpleString() (Token, int) {
 	bytesProcessed := 1
 	str := ""
 	isLastByte := false
@@ -175,7 +181,7 @@ func (p *Parser) simpleString() (Token, int) {
 	return NewToken(SIMPLE_STRING, str), bytesProcessed
 }
 
-func (p *Parser) length() (int, int) {
+func (p *parser) length() (int, int) {
 	bytesProcessed := 0
 	lenBytes := []byte{}
 	isSecondLastByte := false
@@ -206,14 +212,14 @@ func (p *Parser) length() (int, int) {
 	return int(num), bytesProcessed
 }
 
-func (p *Parser) isNumber(b byte) bool {
+func (p *parser) isNumber(b byte) bool {
 	if b >= '0' && b <= '9' {
 		return true
 	}
 	return false
 }
 
-func (p *Parser) setBufferInvalidError(err error) {
+func (p *parser) setBufferInvalidError(err error) {
 	p.err = &BufferSchemaInvalid{
 		rawError: err,
 	}
@@ -221,7 +227,7 @@ func (p *Parser) setBufferInvalidError(err error) {
 
 // *3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n"
 
-func (p *Parser) validateEnd() {
+func (p *parser) validateEnd() {
 	// Check end of string
 	b, err := p.reader.ReadByte()
 	if err != nil {

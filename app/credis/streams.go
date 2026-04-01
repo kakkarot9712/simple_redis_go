@@ -2,20 +2,20 @@ package credis
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
 type Stream interface {
-	Error() error
-	CreateOrUpdateStream(key string, values []KeyValue, opts ...AddStreamOpts) string
+	CreateOrUpdateStream(key string, values []KeyValue, opts ...AddStreamOpts) (string, error)
 	IsStreamKey(key string) bool
 }
 
 type streamStore struct {
+	mu        sync.RWMutex
 	store     map[string]map[int]map[int][]KeyValue
 	ids       map[string][]int
 	sequences map[string]map[int][]int
-	err       error
 	lastId    int
 	lastSeq   int
 }
@@ -49,10 +49,6 @@ func NewStream() Stream {
 	}
 }
 
-func (s *streamStore) Error() error {
-	return s.err
-}
-
 type addStreamOpts struct {
 	id  *int
 	seq *int
@@ -73,7 +69,9 @@ func WithPredefinedIdAndSequence(id int, seq int) AddStreamOpts {
 	}
 }
 
-func (s *streamStore) CreateOrUpdateStream(key string, values []KeyValue, opts ...AddStreamOpts) string {
+func (s *streamStore) CreateOrUpdateStream(key string, values []KeyValue, opts ...AddStreamOpts) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	options := addStreamOpts{}
 	for _, opt := range opts {
 		opt(&options)
@@ -98,19 +96,16 @@ func (s *streamStore) CreateOrUpdateStream(key string, values []KeyValue, opts .
 		}
 	}
 	if id == 0 && seq == 0 {
-		s.err = &ErrInvalidStreamId{}
-		return ""
+		return "", &ErrInvalidStreamId{}
 	}
 
 	if id < s.lastId {
 		// TODO: Validate
-		s.err = &ErrIdLessThenStreamTop{}
-		return ""
+		return "", &ErrIdLessThenStreamTop{}
 	}
 
 	if s.lastId == id && s.lastSeq >= seq {
-		s.err = &ErrIdLessThenStreamTop{}
-		return ""
+		return "", &ErrIdLessThenStreamTop{}
 	}
 
 	// Add or update stream
@@ -133,10 +128,12 @@ func (s *streamStore) CreateOrUpdateStream(key string, values []KeyValue, opts .
 	}
 	s.lastId = id
 	s.lastSeq = seq
-	return fmt.Sprintf("%v-%v", id, seq)
+	return fmt.Sprintf("%v-%v", id, seq), nil
 }
 
 func (s *streamStore) IsStreamKey(key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	streams := s.ids[key]
 	return len(streams) > 0
 }

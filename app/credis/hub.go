@@ -2,7 +2,6 @@ package credis
 
 import (
 	"fmt"
-	"io"
 	"sync"
 	"time"
 )
@@ -20,50 +19,48 @@ var waitingArea = WaitingArea{
 	queue: make(map[string][]BLPOPHold),
 }
 
-type Hub struct {
-	RequestChan chan Request
+type Hub interface {
+	Shutdown()
+	Start(
+		executor Executor,
+		replHandler Server,
+	)
+	StartWorker()
+	RequestChannel() chan Request
+	Executor() Executor
+}
+
+type hub struct {
+	requestChan chan Request
 	wg          sync.WaitGroup
 	executor    Executor
-	replHandler ReplicaHandler
+	replHandler Server
 }
 
-type ReplicaHandler interface {
-	AddToReplicaGroup(id string, conn io.Writer)
-	PropagateToReplicaGroup(cmd string, args ...Token)
-	IsPartOfReplicaGroup(id string) bool
-	RemoveFromReplicaGroup(id string)
-}
-
-func NewHub() *Hub {
+func NewHub() Hub {
 	handler := make(chan Request, WORKERS_LIMIT)
-	return &Hub{
-		RequestChan: handler,
+	return &hub{
+		requestChan: handler,
 	}
 }
 
-func (h *Hub) StartWorker() {
+func (h *hub) StartWorker() {
 	h.wg.Add(1)
 	for {
 		select {
-		case req, ok := <-h.RequestChan:
+		case req, ok := <-h.requestChan:
 			if !ok {
 				h.wg.Done()
 				break
 			}
-			out := h.executor.Exec(req)
-			if h.executor.Error() != nil {
-				// Something is wrong
-				fmt.Println("error while execution: ", h.executor.Error())
-			}
-			spec := req.Cmd()
+			res := h.executor.Exec(req)
+			spec := req.Specs()
 			if spec, ok := spec.(*BLPOPSpecs); ok && !spec.Concluded {
 				continue
 			}
-			req.Receive() <- &response{
-				data: out,
-			}
+			req.Client().Receive() <- res
 			// Propagate to replicas
-			cmd := req.Cmd().String()
+			cmd := req.Specs().String()
 			args := req.Args()
 			switch cmd {
 			case SET, INCR:
@@ -83,7 +80,7 @@ func (h *Hub) StartWorker() {
 					break
 				}
 				if len(out) > 0 {
-					waitingArea.queue[key][0].req.Receive() <- &response{
+					waitingArea.queue[key][0].req.Client().Receive() <- &response{
 						data: out,
 					}
 				}
@@ -104,9 +101,9 @@ func (h *Hub) StartWorker() {
 	}
 }
 
-func (h *Hub) Start(
+func (h *hub) Start(
 	executor Executor,
-	replHandler ReplicaHandler,
+	replHandler Server,
 ) {
 	h.executor = executor
 	h.replHandler = replHandler
@@ -115,8 +112,16 @@ func (h *Hub) Start(
 	}
 }
 
-func (h *Hub) Shutdown() {
-	close(h.RequestChan)
+func (h *hub) Shutdown() {
+	close(h.requestChan)
 	fmt.Println("Waiting for unfinished jobs")
 	h.wg.Wait()
+}
+
+func (h *hub) RequestChannel() chan Request {
+	return h.requestChan
+}
+
+func (h *hub) Executor() Executor {
+	return h.executor
 }

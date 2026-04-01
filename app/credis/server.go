@@ -1,7 +1,6 @@
 package credis
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"net"
@@ -10,23 +9,28 @@ import (
 
 type SectionInfo map[string]string
 
-type ServerInfo map[string]SectionInfo
+type serverInfo map[string]SectionInfo
 
-func NewInfo() ServerInfo {
-	return ServerInfo{
+type ServerInfo interface {
+	Get(section string, key string) string
+	Section(section string) map[string]string
+}
+
+func NewInfo() *serverInfo {
+	return &serverInfo{
 		"replication": make(SectionInfo),
 	}
 }
 
-func (info *ServerInfo) Get(section string, key string) string {
+func (info *serverInfo) Get(section string, key string) string {
 	return (*info)[section][key]
 }
 
-func (info *ServerInfo) Section(section string) map[string]string {
+func (info *serverInfo) Section(section string) map[string]string {
 	return (*info)[section]
 }
 
-func (info *ServerInfo) set(section string, key string, value string) {
+func (info *serverInfo) set(section string, key string, value string) {
 	(*info)[section][key] = value
 }
 
@@ -62,42 +66,64 @@ func AsReplica(replOpts ...ReplicaConfigOptions) ConfigOption {
 	}
 }
 
-type Server struct {
+type Server interface {
+	GetReplicaNums() uint
+	SubscribeToReplicaUpdates(c Client) *ReplicaUpdateSubscription
+	SubManager() Subscription
+	Hub() Hub
+	Store() dataStores
+	Info() ServerInfo
+	RDB() RDBStore
+	AddToReplicaGroup(id string, conn io.Writer)
+	PropagateToReplicaGroup(cmd string, args ...Token)
+	IsPartOfReplicaGroup(id string) bool
+	RemoveFromReplicaGroup(id string)
+	StartMaster() error
+	StartReplica()
+	Auth(user string) Auth
+}
+
+type dataStores struct {
+	KV     KVStore
+	Stream Stream
+	List   ListStore[string]
+}
+
+type server struct {
 	mu                          sync.RWMutex
 	port                        int
 	host                        string
 	replica                     *replicaConfig
 	numReplicas                 uint
 	replicaUpdatesSubscriptions map[string]chan uint
-	Info                        ServerInfo
-	hub                         *Hub
-	Store                       struct {
-		KV     KVStore
-		Stream Stream
-		List   ListStore[string]
-	}
-	replicas map[string]io.Writer
-	Rdb      RDBStore
+	info                        *serverInfo
+	hub                         Hub
+	subManager                  Subscription
+	store                       dataStores
+	replicas                    map[string]io.Writer
+	rdb                         RDBStore
+	auth                        map[string]Auth
 }
 
-func New(hub *Hub, opts ...ConfigOption) *Server {
+func New(hub Hub, opts ...ConfigOption) Server {
 	cfg := config{}
+	defaultAuth := DefaultAuth()
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	srv := Server{
-		Store: struct {
-			KV     KVStore
-			Stream Stream
-			List   ListStore[string]
-		}{
+	srv := &server{
+		store: dataStores{
 			NewStore(), NewStream(), NewListStore[string](),
 		},
 		hub:                         hub,
 		host:                        "0.0.0.0",
 		port:                        6379,
 		replicaUpdatesSubscriptions: make(map[string]chan uint),
-		Info:                        NewInfo(),
+		info:                        NewInfo(),
+		subManager:                  NewSubscriptionManager(),
+		auth: map[string]Auth{
+			defaultAuth.User(): defaultAuth,
+		},
 	}
 	if cfg.host != "" {
 		srv.host = cfg.host
@@ -107,26 +133,26 @@ func New(hub *Hub, opts ...ConfigOption) *Server {
 	}
 	if cfg.replica != nil {
 		srv.replica = cfg.replica
-		srv.Info.set("replication", "role", "slave")
+		srv.info.set("replication", "role", "slave")
 	} else {
 		srv.replicas = make(map[string]io.Writer)
-		srv.Info.set("replication", "role", "master")
-		srv.Info.set("replication", "master_repl_offset", "0")
-		srv.Info.set("replication", "master_replid", GenerateString(40))
+		srv.info.set("replication", "role", "master")
+		srv.info.set("replication", "master_repl_offset", "0")
+		srv.info.set("replication", "master_replid", GenerateString(40))
 	}
 	if cfg.rdbDir != "" && cfg.rdbFileName != "" {
-		srv.Rdb = NewRDB(cfg.rdbDir, cfg.rdbFileName)
-		srv.Rdb.Load()
-		if srv.Rdb.Error() != nil {
-			fmt.Printf("RDB Restore aborted: %v", srv.Rdb.Error().Error())
+		srv.rdb = NewRDB(cfg.rdbDir, cfg.rdbFileName)
+		srv.rdb.Load()
+		if srv.rdb.Error() != nil {
+			fmt.Printf("RDB Restore aborted: %v", srv.rdb.Error().Error())
 		} else {
-			srv.Rdb.Restore(srv.Store.KV)
+			srv.rdb.Restore(srv.store.KV)
 		}
 	}
-	return &srv
+	return srv
 }
 
-func (srv *Server) StartMaster() error {
+func (srv *server) StartMaster() error {
 	l, err := net.Listen("tcp", fmt.Sprintf("%v:%v", srv.host, srv.port))
 	if err != nil {
 		return fmt.Errorf("failed to bind to port %v", srv.port)
@@ -136,25 +162,11 @@ func (srv *Server) StartMaster() error {
 		if err != nil {
 			return fmt.Errorf("error accepting connection: %v", err.Error())
 		}
-		parser := NewParser(bufio.NewReader(conn))
-		id := GenerateString(10)
-		go handle(
-			&client{
-				id:      id,
-				Conn:    conn,
-				parser:  parser,
-				Srv:     srv,
-				receive: make(chan Response),
-				send:    srv.hub.RequestChan,
-				tx:      NewTX(),
-				sub:     NewSubscriptionProvider(id),
-				exec:    srv.hub.executor,
-			},
-		)
+		go handle(NewClient(conn, srv))
 	}
 }
 
-func (srv *Server) AddToReplicaGroup(id string, writer io.Writer) {
+func (srv *server) AddToReplicaGroup(id string, writer io.Writer) {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 
@@ -169,7 +181,7 @@ func (srv *Server) AddToReplicaGroup(id string, writer io.Writer) {
 	}()
 }
 
-func (srv *Server) PropagateToReplicaGroup(cmd string, args ...Token) {
+func (srv *server) PropagateToReplicaGroup(cmd string, args ...Token) {
 	srv.mu.RLock()
 	defer srv.mu.RUnlock()
 	for _, repl := range srv.replicas {
@@ -184,7 +196,7 @@ func (srv *Server) PropagateToReplicaGroup(cmd string, args ...Token) {
 	}
 }
 
-func (srv *Server) RemoveFromReplicaGroup(id string) {
+func (srv *server) RemoveFromReplicaGroup(id string) {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 
@@ -199,11 +211,19 @@ func (srv *Server) RemoveFromReplicaGroup(id string) {
 	}()
 }
 
-func (srv *Server) IsPartOfReplicaGroup(id string) bool {
+func (srv *server) IsPartOfReplicaGroup(id string) bool {
 	srv.mu.RLock()
 	defer srv.mu.RUnlock()
 
 	return srv.replicas[id] != nil
+}
+
+func (srv *server) Hub() Hub {
+	return srv.hub
+}
+
+func (srv *server) Auth(user string) Auth {
+	return srv.auth[user]
 }
 
 type ReplicaUpdateSubscription struct {
@@ -212,7 +232,7 @@ type ReplicaUpdateSubscription struct {
 	id     string
 }
 
-func (srv *Server) SubscribeToReplicaUpdates(c Client) *ReplicaUpdateSubscription {
+func (srv *server) SubscribeToReplicaUpdates(c Client) *ReplicaUpdateSubscription {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 	subC := make(chan uint)
@@ -229,8 +249,24 @@ func (srv *Server) SubscribeToReplicaUpdates(c Client) *ReplicaUpdateSubscriptio
 	return &sub
 }
 
-func (srv *Server) GetReplicaNums() uint {
+func (srv *server) GetReplicaNums() uint {
 	srv.mu.RLock()
 	defer srv.mu.RUnlock()
 	return srv.numReplicas
+}
+
+func (srv *server) SubManager() Subscription {
+	return srv.subManager
+}
+
+func (srv *server) Store() dataStores {
+	return srv.store
+}
+
+func (srv *server) Info() ServerInfo {
+	return srv.info
+}
+
+func (srv *server) RDB() RDBStore {
+	return srv.rdb
 }

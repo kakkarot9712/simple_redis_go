@@ -71,3 +71,15 @@ type NoOtherCommandsInSubscribeContext struct {
 func (e *NoOtherCommandsInSubscribeContext) Error() string {
 	return fmt.Sprintf("ERR Can't execute '%v': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context", e.cmd)
 }
+
+type ErrAuthWrongPassword struct{}
+
+func (e *ErrAuthWrongPassword) Error() string {
+	return "WRONGPASS invalid username-password pair or user is disabled."
+}
+
+type ErrNoAuth struct{}
+
+func (e *ErrNoAuth) Error() string {
+	return "NOAUTH Authentication required."
+}

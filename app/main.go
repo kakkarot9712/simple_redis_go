@@ -49,7 +49,7 @@ func main() {
 	if isSlave {
 		go srv.StartReplica()
 	}
-	exec := credis.NewExec(srv.Store, &srv.Info, srv.Rdb)
+	exec := credis.NewExec(srv.Store(), srv.Info(), srv.RDB())
 	go h.Start(exec, srv)
 	err := srv.StartMaster()
 	if err != nil {

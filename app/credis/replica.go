@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"strings"
-	"sync/atomic"
 )
 
 type replicaConfig struct {
@@ -30,9 +30,8 @@ func WithLeaderPort(port int) ReplicaConfigOptions {
 	}
 }
 
-func (srv *Server) StartReplica() {
-	var processedByte atomic.Uint64
-	if srv.Info.Get("replication", "role") != "slave" {
+func (srv *server) StartReplica() {
+	if srv.info.Get("replication", "role") != "slave" {
 		fmt.Println("won't start slave! server is in master role")
 		return
 	}
@@ -101,24 +100,24 @@ func (srv *Server) StartReplica() {
 		switch token.Type {
 		case ARRAY:
 			tokens := token.Literal.([]Token)
-			exec := NewExec(srv.Store, &srv.Info, srv.Rdb)
+			exec := NewExec(srv.store, srv.info, srv.rdb)
 			if len(tokens) > 0 {
-				cmd, err := ParseCmd(tokens...)
-				if err != nil || cmd == nil {
+				buffLen := uint(math.Min(float64(2), float64(len(tokens))))
+				argsIndex, cmd, err := ParseCmd(tokens[:buffLen]...)
+				if err != nil {
 					continue
 				}
-				switch cmd.String() {
+				switch cmd {
 				case SET, INCR, REPLCONF:
-					out := exec.Exec(
-						NewRequest(redisClient, context.Background(), cmd),
-						WithProcessedBytesAtomic(&processedByte),
-					)
-					if exec.Error() != nil {
-						// TODO: Something is wrong
-						fmt.Println("error while execution: ", exec.Error())
+					req := NewRequest(redisClient, context.TODO())
+					var args []Token
+					if len(tokens) > argsIndex {
+						args = tokens[argsIndex:]
 					}
-					if cmd.String() == REPLCONF {
-						conn.Write(out)
+					req.SetArgs(args...)
+					out := exec.Exec(req)
+					if cmd == REPLCONF {
+						conn.Write(out.Data())
 					}
 				default:
 					fmt.Println("command process not allowed for command: ")
@@ -128,7 +127,7 @@ func (srv *Server) StartReplica() {
 			fmt.Println("unsupported command pattern: ", token)
 		}
 		// TODO: Validate commands
-		processedByte.Add(uint64(bytesProcessed))
+		redisClient.ProcessedAtomic().Add(uint64(bytesProcessed))
 	}
 	srv.RemoveFromReplicaGroup(redisClient.Id())
 	srv.mu.Lock()

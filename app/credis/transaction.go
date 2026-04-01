@@ -1,6 +1,7 @@
 package credis
 
 import (
+	"context"
 	"sync"
 )
 
@@ -28,7 +29,7 @@ func (tx *TX) Discard() []byte {
 	return enc.Bytes()
 }
 
-func (tx *TX) Exec(req Request) []byte {
+func (tx *TX) Exec(client Client, ctx context.Context) []byte {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	enc := NewEncoder()
@@ -41,13 +42,13 @@ func (tx *TX) Exec(req Request) []byte {
 			if r == nil {
 				break
 			}
-			executor := req.Executor()
+			executor := client.Executor()
 			relayReq := NewRequest(
-				(*r),
+				client,
 				(*r).Ctx(),
-				(*r).Cmd(),
 			)
-			out := executor.Exec(relayReq)
+			relayReq.SetSpecs((*r).Specs())
+			out := executor.Exec(relayReq).Data()
 			responses = append(responses, out)
 		}
 	}
@@ -69,18 +70,6 @@ func (tx *TX) Enqueue(req Request) []byte {
 	tx.txs.Append(req)
 	return NewEncoder().SimpleString("QUEUED").Commit().Bytes()
 }
-
-// func (tx *TX) EnableMulti() {
-// 	tx.mu.Lock()
-// 	defer tx.mu.Unlock()
-// 	tx.multi = true
-// }
-
-// func (tx *TX) DisableMulti() {
-// 	tx.mu.Lock()
-// 	defer tx.mu.Unlock()
-// 	tx.multi = false
-// }
 
 func (tx *TX) IsMulti() bool {
 	tx.mu.RLock()

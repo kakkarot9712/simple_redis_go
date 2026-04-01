@@ -10,7 +10,8 @@ This project is a simplified Redis clone implemented in Go, created as part of t
 - List support with `RPUSH`, `LPUSH`, `LRANGE`, `LLEN`, `LPOP` and `BLPOP` commands.
 - Streams support with `TYPE` and `XADD` commands.
 - Basic Transaction support with `MULTI`, `INCR`, `EXEC` and `DISCARD` commands.
-- Pub/Sub support with `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE` and `PUNSUBSCRIBE` commands.
+- Pub/Sub support with `SUBSCRIBE`, `UNSUBSCRIBE` and `PUBLISH` commands.
+- Basic ACL support with `AUTH`, `ACL WHOAMI`, `ACL GETUSER` and `ACL SETUSER` commands.
 
 ## Prerequisites
 
@@ -92,17 +93,21 @@ The following Redis commands are implemented in this project:
 22. `BLPOP`: Blocking pop from the head of a list
 23. `SUBSCRIBE`: Subscribe to one or more channels
 24. `UNSUBSCRIBE`: Unsubscribe from one or more channels
-<!-- 25. `PSUBSCRIBE`: Subscribe to channels matching a pattern -->
-<!-- 26. `PUNSUBSCRIBE`: Unsubscribe from channels matching a pattern -->
-<!-- 27. `COMMAND`: Get information about Redis commands -->
-25. `QUIT`: Close the connection
+25. `PUBLISH`: Publish a message to a channel
+26. `AUTH`: Authenticate with a username and password
+27. `ACL WHOAMI`: Return the username of the current connection
+28. `ACL GETUSER`: Get flags and passwords for a user
+29. `ACL SETUSER`: Create or modify a user (supports `>password` rule to set password)
+30. `QUIT`: Close the connection
 
 ## Limitations
 
 - `HGET` and `HSET` commands are not supported.
 - `XRANGE` and `XREAD` stream commands are not supported; only `XADD` is available.
+- `PSUBSCRIBE` and `PUNSUBSCRIBE` (pattern-based pub/sub) are not supported.
 - RDB file loading is supported but `SAVE` command (writing RDB) is not.
 - Only RDB with single database and basic key-value storage is supported.
+- ACL support is limited to password-based authentication; command/key permissions are not enforced.
 
 ## Acknowledgments
 

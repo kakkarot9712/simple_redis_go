@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+type Cmd string
+
 const (
 	ECHO         = "echo"
 	COMMAND      = "command"
@@ -36,115 +38,168 @@ const (
 	PSUBSCRIBE   = "psubscribe"
 	PUNSUBSCRIBE = "punsubscribe"
 	QUIT         = "quit"
+	PUBLISH      = "publish"
+	ACL_WHOAMI   = "acl_whoami"
+	ACL_GETUSER  = "acl_getuser"
+	ACL_SETUSER  = "acl_setuser"
+	AUTH         = "auth"
 )
 
-type Cmd interface {
+type Specs interface {
 	Parse(args ...Token) error
-	Execute(e *executor, req Request) []byte
+	Execute(e *executor, req Request) Response
 	String() string
 }
 
 type GenericSpec struct {
-	MinArgs int
-	MaxArgs int
+	MinArgs   int
+	MaxArgs   int
+	Supported bool
 }
 
 var commandRegistry = map[string]GenericSpec{
 	ECHO: {
-		MinArgs: 1,
-		MaxArgs: -1,
-	},
-	PING: {
-		MinArgs: 0,
-		MaxArgs: 0,
+		MinArgs:   1,
+		MaxArgs:   -1,
+		Supported: true,
 	},
 	SET: {
-		MinArgs: 2,
-		MaxArgs: 4,
+		MinArgs:   2,
+		MaxArgs:   4,
+		Supported: true,
 	},
 	GET: {
-		MinArgs: 1,
-		MaxArgs: 1,
+		MinArgs:   1,
+		MaxArgs:   1,
+		Supported: true,
 	},
 	INCR: {
-		MinArgs: 1,
-		MaxArgs: 1,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   1,
 	},
 	INFO: {
-		MinArgs: 1,
-		MaxArgs: 1,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   1,
 	},
 	REPLCONF: {
-		MinArgs: 2,
-		MaxArgs: 2,
+		MinArgs:   2,
+		Supported: true,
+		MaxArgs:   2,
 	},
 	PSYNC: {
-		MinArgs: 2,
-		MaxArgs: 2,
+		MinArgs:   2,
+		Supported: true,
+		MaxArgs:   2,
 	},
 	KEYS: {
-		MinArgs: 1,
-		MaxArgs: 1,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   1,
 	},
 	CONFIG: {
-		MinArgs: 2,
-		MaxArgs: 2,
+		MinArgs:   2,
+		Supported: true,
+		MaxArgs:   2,
 	},
 	COMMAND: {
-		MinArgs: 1,
-		MaxArgs: -1,
-	},
-	MULTI: {
-		MinArgs: 0,
-		MaxArgs: 0,
-	},
-	EXEC: {
-		MinArgs: 0,
-		MaxArgs: 0,
-	},
-	DISCARD: {
-		MinArgs: 0,
-		MaxArgs: 0,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   -1,
 	},
 	TYPE: {
-		MinArgs: 1,
-		MaxArgs: 1,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   1,
 	},
 	XADD: {
-		MinArgs: 4,
-		MaxArgs: -1,
+		MinArgs:   4,
+		Supported: true,
+		MaxArgs:   -1,
 	},
 	RPUSH: {
-		MinArgs: 2,
-		MaxArgs: -1,
+		MinArgs:   2,
+		Supported: true,
+		MaxArgs:   -1,
 	},
 	LRANGE: {
-		MinArgs: 3,
-		MaxArgs: 3,
+		MinArgs:   3,
+		Supported: true,
+		MaxArgs:   3,
 	},
 	LPUSH: {
-		MinArgs: 2,
-		MaxArgs: -1,
+		MinArgs:   2,
+		Supported: true,
+		MaxArgs:   -1,
 	},
 	LLEN: {
-		MinArgs: 1,
-		MaxArgs: 1,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   1,
 	},
 	LPOP: {
-		MinArgs: 1,
-		MaxArgs: 2,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   2,
 	},
 	BLPOP: {
-		MinArgs: 1,
-		MaxArgs: -1,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   -1,
 	},
 	WAIT: {
-		MinArgs: 2,
-		MaxArgs: 2,
+		MinArgs:   2,
+		Supported: true,
+		MaxArgs:   2,
 	},
 	SUBSCRIBE: {
-		MinArgs: 1,
-		MaxArgs: 1,
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   1,
+	},
+	PUBLISH: {
+		MinArgs:   2,
+		Supported: true,
+		MaxArgs:   2,
+	},
+	UNSUBSCRIBE: {
+		MinArgs:   1,
+		Supported: true,
+		MaxArgs:   1,
+	},
+	ACL_WHOAMI: {
+		Supported: true,
+	},
+	PING: {
+		Supported: true,
+	},
+	MULTI: {
+		Supported: true,
+	},
+	EXEC: {
+		Supported: true,
+	},
+	DISCARD: {
+		Supported: true,
+	},
+	QUIT: {
+		Supported: true,
+	},
+	ACL_GETUSER: {
+		Supported: true,
+		MinArgs:   1,
+		MaxArgs:   1,
+	},
+	ACL_SETUSER: {
+		Supported: true,
+		MinArgs:   2,
+		MaxArgs:   -1,
+	},
+	AUTH: {
+		Supported: true,
+		MinArgs:   2,
+		MaxArgs:   2,
 	},
 }
 
@@ -175,14 +230,14 @@ func (s *ECHOSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (s *ECHOSpecs) Execute(e *executor, req Request) []byte {
+func (s *ECHOSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
-	enc.BulkString(s.Data)
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	enc.BulkString(&s.Data)
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type PINGSpecs struct {
@@ -196,14 +251,22 @@ func (s *PINGSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (s *PINGSpecs) Execute(e *executor, req Request) []byte {
+func (s *PINGSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
-	enc.SimpleString("PONG")
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	if req.Client().Srv().SubManager().Count(req.Client().Id()) > 0 {
+		res := []Token{
+			NewToken(BULK_STRING, "pong"),
+			NewToken(BULK_STRING, ""),
+		}
+		enc.Array(res...)
+	} else {
+		enc.SimpleString("PONG")
+	}
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type CONFIGSpecs struct {
@@ -224,7 +287,7 @@ func (spec *CONFIGSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (s *CONFIGSpecs) Execute(e *executor, req Request) []byte {
+func (s *CONFIGSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	action := s.Action
 	switch action {
@@ -242,19 +305,19 @@ func (s *CONFIGSpecs) Execute(e *executor, req Request) []byte {
 				NewToken(BULK_STRING, e.rdbConfig.GetRDBFileName()),
 			)
 		default:
-			if hasErr, data := e.parseError(fmt.Errorf("key unsupoorted for command"), enc); hasErr {
-				return data
+			if hasErr, data := EncodeError(fmt.Errorf("key unsupoorted for command"), enc); hasErr {
+				return &response{data: data}
 			}
 			return nil
 		}
 	default:
-		if hasErr, data := e.parseError(fmt.Errorf("config action unsupported: %v", action), enc); hasErr {
-			return data
+		if hasErr, data := EncodeError(fmt.Errorf("config action unsupported: %v", action), enc); hasErr {
+			return &response{data: data}
 		}
 		return nil
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type GETSpecs struct {
@@ -276,22 +339,26 @@ func (spec *GETSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *GETSpecs) Execute(e *executor, req Request) []byte {
+func (spec *GETSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	val := e.store.KV.Get(spec.Key, spec.CurrentTime)
 	switch val.Type {
 	case BULK_STRING, SIMPLE_STRING:
 		data := val.Literal.(string)
-		enc.BulkString(data)
-		if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-			return data
+		if data == "" {
+			enc.BulkString(nil)
+		} else {
+			enc.BulkString(&data)
+		}
+		if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+			return &response{data: data}
 		}
 		enc.Commit()
-		return enc.Bytes()
+		return &response{data: enc.Bytes()}
 	default:
 		// TODO: support other type of values
-		if hasErr, data := e.parseError(fmt.Errorf("unsupported data as value for GET: %v", val.Literal), enc); hasErr {
-			return data
+		if hasErr, data := EncodeError(fmt.Errorf("unsupported data as value for GET: %v", val.Literal), enc); hasErr {
+			return &response{data: data}
 		}
 		return nil
 	}
@@ -315,7 +382,7 @@ func (spec *INCRSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *INCRSpecs) Execute(e *executor, req Request) []byte {
+func (spec *INCRSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	key := spec.Key
 	val := e.store.KV.Get(key, spec.CurrentTime)
@@ -329,35 +396,35 @@ func (spec *INCRSpecs) Execute(e *executor, req Request) []byte {
 			updaredNum = 1
 			value := NewToken(BULK_STRING, fmt.Sprintf("%v", 1))
 			e.store.KV.Set(key, value, nil)
-			if hasErr, data := e.parseError(e.store.KV.Error(), enc); hasErr {
-				return data
+			if hasErr, data := EncodeError(e.store.KV.Error(), enc); hasErr {
+				return &response{data: data}
 			}
 		} else {
 			num, err := strconv.ParseInt(val.Literal.(string), 10, 64)
 			if err != nil {
-				if hasErr, data := e.parseError(&ErrNotInteger{
+				if hasErr, data := EncodeError(&ErrNotInteger{
 					data: num,
 				}, enc); hasErr {
-					return data
+					return &response{data: data}
 				}
 				return nil
 			}
 			updaredNum = int(num) + 1
 			updatedValue := NewToken(BULK_STRING, fmt.Sprintf("%v", updaredNum))
 			e.store.KV.Update(key, updatedValue)
-			if hasErr, data := e.parseError(e.store.KV.Error(), enc); hasErr {
-				return data
+			if hasErr, data := EncodeError(e.store.KV.Error(), enc); hasErr {
+				return &response{data: data}
 			}
 		}
 		enc.Integer(updaredNum)
-		if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-			return data
+		if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+			return &response{data: data}
 		}
 		enc.Commit()
-		return enc.Bytes()
+		return &response{data: enc.Bytes()}
 	default:
-		if hasErr, data := e.parseError(fmt.Errorf("unsupported value for command INCR: %v", val.Literal), enc); hasErr {
-			return data
+		if hasErr, data := EncodeError(fmt.Errorf("unsupported value for command INCR: %v", val.Literal), enc); hasErr {
+			return &response{data: data}
 		}
 		return nil
 	}
@@ -379,7 +446,7 @@ func (spec *INFOSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *INFOSpecs) Execute(e *executor, req Request) []byte {
+func (spec *INFOSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	section := spec.Section
 	var resp strings.Builder
@@ -387,12 +454,13 @@ func (spec *INFOSpecs) Execute(e *executor, req Request) []byte {
 	for key, value := range sectionInfo {
 		fmt.Fprintf(&resp, "%v:%v\r\n", key, value)
 	}
-	enc.BulkString(resp.String())
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	data := resp.String()
+	enc.BulkString(&data)
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type KEYSpecs struct {
@@ -411,7 +479,7 @@ func (spec *KEYSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *KEYSpecs) Execute(e *executor, req Request) []byte {
+func (spec *KEYSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	filter := spec.Filter
 	if filter == "*" {
@@ -421,13 +489,13 @@ func (spec *KEYSpecs) Execute(e *executor, req Request) []byte {
 		}
 		enc.Array(keys...)
 	} else {
-		if hasErr, data := e.parseError(fmt.Errorf("unknown subcommand for KEYS: %v", filter), enc); hasErr {
-			return data
+		if hasErr, data := EncodeError(fmt.Errorf("unknown subcommand for KEYS: %v", filter), enc); hasErr {
+			return &response{data: data}
 		}
 		return nil
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type LLENSpecs struct {
@@ -446,11 +514,11 @@ func (specs *LLENSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *LLENSpecs) Execute(e *executor, req Request) []byte {
+func (spec *LLENSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	enc.Integer(e.store.List.Len(spec.Key))
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type LRANGESpecs struct {
@@ -481,7 +549,7 @@ func (specs *LRANGESpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *LRANGESpecs) Execute(e *executor, req Request) []byte {
+func (spec *LRANGESpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	data := e.store.List.Get(spec.Key, spec.Start, spec.End)
 	dataTokens := []Token{}
@@ -490,7 +558,7 @@ func (spec *LRANGESpecs) Execute(e *executor, req Request) []byte {
 	}
 	enc.Array(dataTokens...)
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type PSYNCSpecs struct {
@@ -511,7 +579,7 @@ func (spec *PSYNCSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *PSYNCSpecs) Execute(e *executor, req Request) []byte {
+func (spec *PSYNCSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	replicaId := spec.ReplicaId
 	offset := spec.Offset
@@ -536,19 +604,19 @@ func (spec *PSYNCSpecs) Execute(e *executor, req Request) []byte {
 		0xC0, 0xFF, 0x5A, 0xA2}
 
 	enc.SimpleString(data)
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.RawBytes([]byte(fmt.Sprintf("$%v\r\n", len(emptyRdbBuff))))
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.RawBytes(emptyRdbBuff[:])
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 	// TODO: Fix verified replica logic
 	// e.verifiedReplica = true
 }
@@ -582,7 +650,7 @@ func (spec *REPLCONFSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *REPLCONFSpecs) Execute(e *executor, req Request) []byte {
+func (spec *REPLCONFSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	if spec.ListeningPort != nil {
 		enc.SimpleString("OK")
@@ -592,7 +660,7 @@ func (spec *REPLCONFSpecs) Execute(e *executor, req Request) []byte {
 		arg := spec.GetAck
 		isSlave := e.serverInfo.Get("replication", "role") == "slave"
 		if *arg == "*" && isSlave {
-			bytesCount := e.processed.Load()
+			bytesCount := req.Client().ProcessedAtomic().Load()
 			// REPLCONF ACK 0
 			enc.Array(
 				NewToken(BULK_STRING, "REPLCONF"),
@@ -601,11 +669,11 @@ func (spec *REPLCONFSpecs) Execute(e *executor, req Request) []byte {
 			)
 		}
 	}
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type RPUSHSpecs struct {
@@ -629,14 +697,14 @@ func (specs *RPUSHSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *RPUSHSpecs) Execute(e *executor, req Request) []byte {
+func (spec *RPUSHSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	enc.Integer(e.store.List.Push(spec.Key, spec.Element))
 	enc.Commit()
 	go func() {
 		keyUpdatesChan <- spec.Key
 	}()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type LPUSHSpecs struct {
@@ -660,14 +728,14 @@ func (specs *LPUSHSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *LPUSHSpecs) Execute(e *executor, req Request) []byte {
+func (spec *LPUSHSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	enc.Integer(e.store.List.Prepend(spec.Key, spec.Element))
 	enc.Commit()
 	go func() {
 		keyUpdatesChan <- spec.Key
 	}()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type SETSpecs struct {
@@ -713,7 +781,7 @@ func (spec *SETSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *SETSpecs) Execute(e *executor, req Request) []byte {
+func (spec *SETSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	if spec.Px > 0 {
 		exp := time.Now().Add(time.Duration(uint64(spec.Px) * uint64(time.Millisecond)))
@@ -722,16 +790,16 @@ func (spec *SETSpecs) Execute(e *executor, req Request) []byte {
 		e.store.KV.Set(spec.Key, spec.Value, nil)
 	}
 
-	if hasErr, data := e.parseError(e.store.KV.Error(), enc); hasErr {
+	if hasErr, data := EncodeError(e.store.KV.Error(), enc); hasErr {
 		// TODO: what could go wrong here?
-		return data
+		return &response{data: data}
 	}
 	enc.SimpleString("OK")
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type TYPESpces struct {
@@ -752,7 +820,7 @@ func (spec *TYPESpces) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *TYPESpces) Execute(e *executor, req Request) []byte {
+func (spec *TYPESpces) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	key := spec.Key
 	if e.store.Stream.IsStreamKey(key) {
@@ -762,11 +830,11 @@ func (spec *TYPESpces) Execute(e *executor, req Request) []byte {
 	} else {
 		enc.SimpleString("none")
 	}
-	if hasErr, data := e.parseError(enc.Error(), enc); hasErr {
-		return data
+	if hasErr, data := EncodeError(enc.Error(), enc); hasErr {
+		return &response{data: data}
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type XADDSpecs struct {
@@ -827,7 +895,7 @@ func (spec *XADDSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *XADDSpecs) Execute(e *executor, req Request) []byte {
+func (spec *XADDSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	createStreamOpts := []AddStreamOpts{}
 	if spec.Id == nil && spec.Seq == nil {
@@ -847,13 +915,13 @@ func (spec *XADDSpecs) Execute(e *executor, req Request) []byte {
 			),
 		)
 	}
-	generatedId := e.store.Stream.CreateOrUpdateStream(spec.Key, spec.KVs, createStreamOpts...)
-	if hasErr, data := e.parseError(e.store.Stream.Error(), enc); hasErr {
-		return data
+	generatedId, err := e.store.Stream.CreateOrUpdateStream(spec.Key, spec.KVs, createStreamOpts...)
+	if hasErr, data := EncodeError(err, enc); hasErr {
+		return &response{data: data}
 	}
-	enc.BulkString(generatedId)
+	enc.BulkString(&generatedId)
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type POPSpecs struct {
@@ -880,7 +948,7 @@ func (specs *POPSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *POPSpecs) Execute(e *executor, req Request) []byte {
+func (spec *POPSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	if spec.AmountToRemove > 0 {
 		elements := []Token{}
@@ -894,14 +962,10 @@ func (spec *POPSpecs) Execute(e *executor, req Request) []byte {
 		enc.Array(elements...)
 	} else {
 		popped := e.store.List.Pop(spec.Key)
-		if popped == nil {
-			enc.BulkString("")
-		} else {
-			enc.BulkString(*popped)
-		}
+		enc.BulkString(popped)
 	}
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type BLPOPSpecs struct {
@@ -930,7 +994,7 @@ func (specs *BLPOPSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *BLPOPSpecs) Execute(e *executor, req Request) []byte {
+func (spec *BLPOPSpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
 	removedElements := []string{}
 	for i := 0; i < len(spec.Keys); i++ {
@@ -955,7 +1019,7 @@ func (spec *BLPOPSpecs) Execute(e *executor, req Request) []byte {
 	spec.Concluded = true
 	enc.Array(tokens...)
 	enc.Commit()
-	return enc.Bytes()
+	return &response{data: enc.Bytes()}
 }
 
 type COMMANDSpecs struct {
@@ -969,8 +1033,8 @@ func (spec *COMMANDSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (spec *COMMANDSpecs) Execute(e *executor, req Request) []byte {
-	return NewEncoder().Array().Commit().Bytes()
+func (spec *COMMANDSpecs) Execute(e *executor, req Request) Response {
+	return &response{data: NewEncoder().Array().Commit().Bytes()}
 }
 
 type MULTISpecs struct {
@@ -984,8 +1048,8 @@ func (s *MULTISpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (s *MULTISpecs) Execute(e *executor, req Request) []byte {
-	return req.GetTX().Multi()
+func (s *MULTISpecs) Execute(e *executor, req Request) Response {
+	return &response{data: req.Client().GetTX().Multi()}
 }
 
 type EXECSpecs struct {
@@ -999,7 +1063,7 @@ func (s *EXECSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (s *EXECSpecs) Execute(e *executor, req Request) []byte {
+func (s *EXECSpecs) Execute(e *executor, req Request) Response {
 	return nil
 }
 
@@ -1014,8 +1078,8 @@ func (s *DISCARDSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (s *DISCARDSpecs) Execute(e *executor, req Request) []byte {
-	return req.GetTX().Discard()
+func (s *DISCARDSpecs) Execute(e *executor, req Request) Response {
+	return &response{data: req.Client().GetTX().Discard()}
 }
 
 type WAITSpecs struct {
@@ -1041,11 +1105,10 @@ func (s *WAITSpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (s *WAITSpecs) Execute(e *executor, req Request) []byte { return nil }
+func (s *WAITSpecs) Execute(e *executor, req Request) Response { return nil }
 
 type SUBSCRIBESpecs struct {
 	Key string
-	SubscriptionHandler
 }
 
 func (s *SUBSCRIBESpecs) String() string {
@@ -1057,21 +1120,184 @@ func (s *SUBSCRIBESpecs) Parse(args ...Token) error {
 	return nil
 }
 
-func (s *SUBSCRIBESpecs) Execute(e *executor, req Request) []byte {
+func (s *SUBSCRIBESpecs) Execute(e *executor, req Request) Response {
 	enc := NewEncoder()
-	req.GetSub().Subscribe(s.Key)
-	response := []Token{
+	sub, err := req.Client().Srv().SubManager().Subscribe(s.Key, req.Client().Id())
+	if err != nil {
+		return &response{
+			data:      enc.SimpleError(fmt.Sprintf("ERR: %v", err.Error())).Commit().Bytes(),
+			artifacts: sub,
+		}
+	}
+	req.Client().AddSub(s.Key, sub.Cancel)
+	tokens := []Token{
 		NewToken(BULK_STRING, "subscribe"),
 		NewToken(BULK_STRING, s.Key),
-		NewToken(INTEGER, req.GetSub().Count()),
+		NewToken(INTEGER, req.Client().Srv().SubManager().Count(req.Client().Id())),
 	}
-	return enc.Array(response...).Commit().Bytes()
+	return &response{data: enc.Array(tokens...).Commit().Bytes(), artifacts: sub}
+}
+
+type PUBLISHSpecs struct {
+	Key     string
+	Message string
+}
+
+func (s *PUBLISHSpecs) String() string {
+	return PUBLISH
+}
+
+func (s *PUBLISHSpecs) Parse(args ...Token) error {
+	s.Key = args[0].Literal.(string)
+	s.Message = args[1].Literal.(string)
+	return nil
+}
+
+func (s *PUBLISHSpecs) Execute(e *executor, req Request) Response {
+	res := &response{}
+	count := req.Client().Srv().SubManager().Publish(s.Key, s.Message)
+	res.data = NewEncoder().Integer(count).Commit().Bytes()
+	return res
+}
+
+type UNSUBSCRIBESpecs struct {
+	Key string
+}
+
+func (s *UNSUBSCRIBESpecs) String() string {
+	return UNSUBSCRIBE
+}
+
+func (s *UNSUBSCRIBESpecs) Parse(args ...Token) error {
+	s.Key = args[0].Literal.(string)
+	return nil
+}
+
+func (s *UNSUBSCRIBESpecs) Execute(e *executor, req Request) Response {
+	req.Client().CancelSub(s.Key)
+	// res.data = NewEncoder().Integer(count).Commit().Bytes()
+	enc := NewEncoder()
+	tokens := []Token{
+		NewToken(BULK_STRING, "unsubscribe"),
+		NewToken(BULK_STRING, s.Key),
+		NewToken(INTEGER, req.Client().Srv().SubManager().Count(req.Client().Id())),
+	}
+	return &response{data: enc.Array(tokens...).Commit().Bytes()}
+}
+
+type ACLSETUSERSpecs struct {
+	User  string
+	Rules []string
+}
+
+func (s *ACLSETUSERSpecs) String() string {
+	return ACL_GETUSER
+}
+
+func (s *ACLSETUSERSpecs) Parse(args ...Token) error {
+	s.User = args[0].Literal.(string)
+	if len(args) > 1 {
+		for _, a := range args[1:] {
+			s.Rules = append(s.Rules, a.Literal.(string))
+		}
+	}
+	return nil
+}
+
+func (s *ACLSETUSERSpecs) Execute(e *executor, req Request) Response {
+	enc := NewEncoder()
+	for _, a := range s.Rules {
+		char := a[0]
+		switch char {
+		case '>':
+			req.Client().Srv().Auth(s.User).SetPassword(a[1:])
+			// SetPassword
+		default:
+			// tobe implemented
+		}
+	}
+	return &response{data: enc.Ok()}
+}
+
+type ACLGETUSERSpecs struct {
+	User string
+}
+
+func (s *ACLGETUSERSpecs) String() string {
+	return ACL_GETUSER
+}
+
+func (s *ACLGETUSERSpecs) Parse(args ...Token) error {
+	s.User = args[0].Literal.(string)
+	return nil
+}
+
+func (s *ACLGETUSERSpecs) Execute(e *executor, req Request) Response {
+	// req.Client().CancelSub(s.Key)
+	// res.data = NewEncoder().Integer(count).Commit().Bytes()
+	enc := NewEncoder()
+	flags := []Token{}
+	for _, f := range req.Client().Srv().Auth(s.User).Flags() {
+		flags = append(flags, NewToken(BULK_STRING, f))
+	}
+	passwords := []Token{}
+	for _, p := range req.Client().Srv().Auth(s.User).Passwords() {
+		passwords = append(passwords, NewToken(BULK_STRING, p))
+	}
+	tokens := []Token{
+		NewToken(BULK_STRING, "flags"),
+		NewToken(ARRAY, flags),
+		NewToken(BULK_STRING, "passwords"),
+		NewToken(ARRAY, passwords),
+	}
+	return &response{data: enc.Array(tokens...).Commit().Bytes()}
+}
+
+type AUTHSpecs struct {
+	User     string
+	Password string
+}
+
+func (s *AUTHSpecs) String() string {
+	return AUTH
+}
+
+func (s *AUTHSpecs) Parse(args ...Token) error {
+	s.User = args[0].Literal.(string)
+	s.Password = args[1].Literal.(string)
+	return nil
+}
+
+func (s *AUTHSpecs) Execute(e *executor, req Request) Response {
+	// req.Client().CancelSub(s.Key)
+	// res.data = NewEncoder().Integer(count).Commit().Bytes()
+	enc := NewEncoder()
+	if !req.Client().Srv().Auth(s.User).Authenticate(s.Password) {
+		EncodeError(&ErrAuthWrongPassword{}, enc)
+		return &response{
+			data: enc.Bytes(),
+		}
+	}
+	return &response{data: enc.Ok()}
+}
+
+func ParseCmd(tkns ...Token) (int, string, error) {
+	argsIndex := 1
+	var c string
+	c = strings.ToLower(tkns[0].Literal.(string))
+	if c == "acl" && len(tkns) >= 2 {
+		subcmd := strings.ToLower(tkns[1].Literal.(string))
+		c = c + "_" + subcmd
+		argsIndex = 2
+	}
+	if !commandRegistry[c].Supported {
+		return 0, "", fmt.Errorf("ERR unsupported command")
+	}
+	return argsIndex, c, nil
 }
 
 // SubscriptionHandler
-func ParseCmd(tkns ...Token) (specs Cmd, err error) {
-	cmd := strings.ToLower(tkns[0].Literal.(string))
-	args := tkns[1:]
+func ParseSpec(cmd string, args ...Token) (specs Specs, err error) {
 	spec := GetGenericSpec(cmd)
 	if len(args) < spec.MinArgs || (spec.MaxArgs >= 0 && len(args) > spec.MaxArgs) {
 		err = fmt.Errorf("ERR wrong number of arguments for '%s' command", cmd)
@@ -1126,6 +1352,16 @@ func ParseCmd(tkns ...Token) (specs Cmd, err error) {
 		specs = &WAITSpecs{}
 	case SUBSCRIBE:
 		specs = &SUBSCRIBESpecs{}
+	case PUBLISH:
+		specs = &PUBLISHSpecs{}
+	case UNSUBSCRIBE:
+		specs = &UNSUBSCRIBESpecs{}
+	case ACL_GETUSER:
+		specs = &ACLGETUSERSpecs{}
+	case ACL_SETUSER:
+		specs = &ACLSETUSERSpecs{}
+	case AUTH:
+		specs = &AUTHSpecs{}
 	}
 	if specs != nil {
 		specs.Parse(args...)
