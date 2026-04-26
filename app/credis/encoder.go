@@ -6,27 +6,46 @@ import (
 	"fmt"
 )
 
-type Encoder struct {
+type encoder struct {
 	isDesposed bool
 	writer     *bufio.Writer
 	buff       *bytes.Buffer
 	err        error
 }
 
-func NewEncoder() *Encoder {
+type Encoder interface {
+	Error() error
+	Commit() CommitedEncoder
+	EncodeToken(t Token)
+	Array(args ...Token) []byte
+	BulkString(data *string) []byte
+	SimpleString(data string) []byte
+	Integer(data int) []byte
+	SimpleError(err string) []byte
+	ArrayRaw(rawData [][]byte) []byte
+	Ok() []byte
+	NullArray() []byte
+}
+
+type CommitedEncoder interface {
+	Bytes() []byte
+	Error() error
+}
+
+func NewEncoder() Encoder {
 	buff := bytes.NewBuffer(nil)
 	writer := bufio.NewWriter(buff)
-	return &Encoder{
+	return &encoder{
 		writer: writer,
 		buff:   buff,
 	}
 }
 
-func (e *Encoder) Error() error {
+func (e *encoder) Error() error {
 	return e.err
 }
 
-func (e *Encoder) Bytes() []byte {
+func (e *encoder) Bytes() []byte {
 	if !e.isDesposed {
 		e.err = fmt.Errorf("encoding process has not been commited yet")
 		return []byte{}
@@ -34,7 +53,7 @@ func (e *Encoder) Bytes() []byte {
 	return e.buff.Bytes()
 }
 
-func (e *Encoder) Commit() *Encoder {
+func (e *encoder) Commit() CommitedEncoder {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
 		return e
@@ -44,7 +63,7 @@ func (e *Encoder) Commit() *Encoder {
 	return e
 }
 
-func (e *Encoder) EncodeToken(t Token) {
+func (e *encoder) EncodeToken(t Token) {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
 		return
@@ -52,15 +71,15 @@ func (e *Encoder) EncodeToken(t Token) {
 	switch t.Type {
 	case BULK_STRING:
 		t, _ := t.Literal.(string)
-		e.BulkString(&t)
+		e.bulkString(&t)
 	case SIMPLE_STRING:
-		e.SimpleString(t.Literal.(string))
+		e.simpleString(t.Literal.(string))
 	case INTEGER:
-		e.Integer(t.Literal.(int))
+		e.integer(t.Literal.(int))
 	case SIMPLE_ERROR:
-		e.SimpleError(t.Literal.(string))
+		e.simpleError(t.Literal.(string))
 	case ARRAY:
-		e.Array(t.Literal.([]Token)...)
+		e.array(t.Literal.([]Token)...)
 	default:
 		// TODO: Support other types
 		e.err = &UnsupportedTypeForEncoding{
@@ -69,15 +88,19 @@ func (e *Encoder) EncodeToken(t Token) {
 	}
 }
 
-func (e *Encoder) Array(args ...Token) *Encoder {
+func (e *encoder) Array(args ...Token) []byte {
+	return e.array(args...).Commit().Bytes()
+}
+
+func (e *encoder) array(args ...Token) *encoder {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
-		return e
+		return nil
 	}
 	// Write Length
 	_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n", ARRAY, len(args))
 	if e.err != nil {
-		return e
+		return nil
 	}
 	for _, t := range args {
 		e.EncodeToken(t)
@@ -85,7 +108,11 @@ func (e *Encoder) Array(args ...Token) *Encoder {
 	return e
 }
 
-func (e *Encoder) BulkString(data *string) *Encoder {
+func (e *encoder) BulkString(data *string) []byte {
+	return e.bulkString(data).Commit().Bytes()
+}
+
+func (e *encoder) bulkString(data *string) *encoder {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
 		return e
@@ -93,25 +120,33 @@ func (e *Encoder) BulkString(data *string) *Encoder {
 	if data == nil {
 		// Null bulk string
 		_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n", BULK_STRING, -1)
-		return e
+	} else {
+		_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n%v\r\n", BULK_STRING, len(*data), *data)
 	}
-	_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n%v\r\n", BULK_STRING, len(*data), *data)
 	return e
 }
 
-func (e *Encoder) SimpleString(data string) *Encoder {
+func (e *encoder) SimpleString(data string) []byte {
+	return e.simpleString(data).Commit().Bytes()
+}
+
+func (e *encoder) simpleString(data string) *encoder {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
-		return e
+		return nil
 	}
 	_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n", SIMPLE_STRING, data)
 	return e
 }
 
-func (e *Encoder) Integer(data int) *Encoder {
+func (e *encoder) Integer(data int) []byte {
+	return e.integer(data).Commit().Bytes()
+}
+
+func (e *encoder) integer(data int) *encoder {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
-		return e
+		return nil
 	}
 	// :[<+|->]<value>\r\n
 	sign := ""
@@ -122,24 +157,32 @@ func (e *Encoder) Integer(data int) *Encoder {
 	return e
 }
 
-func (e *Encoder) SimpleError(err string) *Encoder {
+func (e *encoder) SimpleError(err string) []byte {
+	return e.simpleError(err).Commit().Bytes()
+}
+
+func (e *encoder) simpleError(err string) *encoder {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
-		return e
+		return nil
 	}
 	_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n", SIMPLE_ERROR, err)
 	return e
 }
 
-func (e *Encoder) ArrayRaw(rawData [][]byte) *Encoder {
+func (e *encoder) ArrayRaw(rawData [][]byte) []byte {
+	return e.arrayRaw(rawData).Commit().Bytes()
+}
+
+func (e *encoder) arrayRaw(rawData [][]byte) *encoder {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
-		return e
+		return nil
 	}
 	// Write Length
 	_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n", ARRAY, len(rawData))
 	if e.err != nil {
-		return e
+		return nil
 	}
 	for _, rawResponse := range rawData {
 		e.writer.Write(rawResponse)
@@ -147,19 +190,19 @@ func (e *Encoder) ArrayRaw(rawData [][]byte) *Encoder {
 	return e
 }
 
-func (e *Encoder) RawBytes(data []byte) *Encoder {
+func (e *encoder) RawBytes(data []byte) []byte {
 	if e.isDesposed {
 		e.err = fmt.Errorf("encoding process is already commited")
-		return e
+		return nil
 	}
 	_, e.err = e.writer.Write(data)
-	return e
+	return e.Commit().Bytes()
 }
 
-func (e *Encoder) Ok() []byte {
-	return e.SimpleString("OK").Commit().Bytes()
+func (e *encoder) Ok() []byte {
+	return e.SimpleString("OK")
 }
 
-func (e *Encoder) NullArray() []byte {
-	return e.RawBytes([]byte("*-1\r\n")).Commit().Bytes()
+func (e *encoder) NullArray() []byte {
+	return e.RawBytes([]byte("*-1\r\n"))
 }

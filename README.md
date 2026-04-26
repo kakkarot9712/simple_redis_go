@@ -8,10 +8,12 @@ This project is a simplified Redis clone implemented in Go, created as part of t
 - RDB local database support for persistant storage.
 - Partial Replication support.
 - List support with `RPUSH`, `LPUSH`, `LRANGE`, `LLEN`, `LPOP` and `BLPOP` commands.
+- Sorted sets support with `ZADD`, `ZRANK`, `ZRANGE`, `ZCARD`, `ZSCORE` and `ZREM` commands.
 - Streams support with `TYPE` and `XADD` commands.
-- Basic Transaction support with `MULTI`, `INCR`, `EXEC` and `DISCARD` commands.
+- Transaction support with `MULTI`, `INCR`, `EXEC`, `DISCARD`, `WATCH` and `UNWATCH` commands.
 - Pub/Sub support with `SUBSCRIBE`, `UNSUBSCRIBE` and `PUBLISH` commands.
 - Basic ACL support with `AUTH`, `ACL WHOAMI`, `ACL GETUSER` and `ACL SETUSER` commands.
+- Geo support with `GEOADD` command.
 
 ## Prerequisites
 
@@ -98,7 +100,17 @@ The following Redis commands are implemented in this project:
 27. `ACL WHOAMI`: Return the username of the current connection
 28. `ACL GETUSER`: Get flags and passwords for a user
 29. `ACL SETUSER`: Create or modify a user (supports `>password` rule to set password)
-30. `QUIT`: Close the connection
+30. `COMMAND`: Get information about Redis commands
+31. `ZADD`: Add one or more members to a sorted set
+32. `ZRANK`: Get the rank of a member in a sorted set
+33. `ZRANGE`: Get a range of members from a sorted set
+34. `ZCARD`: Get the cardinality (number of members) of a sorted set
+35. `ZSCORE`: Get the score of a member in a sorted set
+36. `ZREM`: Remove one or more members from a sorted set
+37. `WATCH`: Watch one or more keys for transaction
+38. `UNWATCH`: Unwatch all keys
+39. `GEOADD`: Add one or more locations to a geo key
+40. `QUIT`: Close the connection
 
 ## Limitations
 

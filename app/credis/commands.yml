@@ -1,0 +1,403 @@
+version: 1
+out: ../commands.gen.go
+commands:
+  - name: ECHO
+    autoGenerateScalerParser: false
+    args:
+      min: 1
+      max: -1
+      spec:
+        - name: data
+          type: string
+
+  - name: COMMAND
+    autoGenerateScalerParser: false
+    args:
+      min: 1
+      max: -1
+
+  - name: PING
+    autoGenerateScalerParser: false
+    args:
+      min: 0
+      max: 0
+
+  - name: SET
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 4
+      spec:
+        - name: key
+          type: string
+        - name: value
+          type: raw
+        - name: px
+          type: uint
+          afterField: px
+          optional: true
+
+  - name: GET
+    timestamp: true
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: key
+          type: string
+
+  - name: INCR
+    autoGenerateScalerParser: true
+    timestamp: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: key
+          type: string
+
+  - name: MULTI
+    autoGenerateScalerParser: false
+
+  - name: EXEC
+    autoGenerateScalerParser: false
+
+  - name: DISCARD
+    autoGenerateScalerParser: false
+
+  - name: INFO
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: section
+          type: string
+
+  - name: REPLCONF
+    autoGenerateScalerParser: false
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: listeningPort
+          type: string
+          afterField: listening-port
+          optional: true
+        - name: capability
+          type: string
+          afterField: capa
+          optional: true
+        - name: getAck
+          afterField: getack
+          optional: true
+          type: string
+
+  - name: PSYNC
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: replicaId
+          type: string
+        - name: offset
+          type: string
+
+  - name: CONFIG
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: action
+          type: string
+        - name: key
+          type: string
+
+  - name: KEYS
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: filter
+          type: string
+
+  - name: XADD
+    autoGenerateScalerParser: false
+    args:
+      min: 4
+      max: -1
+      spec:
+        - name: key
+          type: string
+        - name: id
+          type: "*int64"
+        - name: seq
+          type: "*int64"
+        - name: KVs
+          type: "[]KeyValue"
+
+  - name: TYPE
+    autoGenerateScalerParser: true
+    timestamp: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: key
+          type: string
+
+  - name: RPUSH
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: -1
+      spec:
+        - name: key 
+          type: string
+        - name: elements
+          type: "[]string"
+
+  - name: LRANGE
+    autoGenerateScalerParser: true
+    args:
+      min: 3
+      max: 3
+      spec:
+        - name: key
+          type: string
+        - name: start
+          type: int
+        - name: end
+          type: int
+
+  - name: LPUSH
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: -1
+      spec:
+        - name: key
+          type: string
+        - name: elements
+          type: "[]string"
+
+  - name: LLEN
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: key
+          type: string
+
+  - name: LPOP
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 2
+      spec:
+        - name: key
+          type: string
+        - name: amountToRemove
+          optional: true
+          type: int
+
+  - name: BLPOP
+    autoGenerateScalerParser: false
+    args:
+      min: 1
+      max: -1
+      spec:
+        - name: keys
+          type: "[]string"
+        - name: lifetime
+          type: "*float64"
+        - name: Concluded
+          type: bool
+
+  - name: WAIT
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: numReplicas
+          type: uint
+        - name: timeout
+          type: uint
+
+  - name: SUBSCRIBE
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: key
+          type: string
+
+  - name: UNSUBSCRIBE
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: key
+          type: string
+
+  - name: QUIT
+    autoGenerateScalerParser: false
+
+  - name: PUBLISH
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: key
+          type: string
+        - name: message
+          type: string
+
+  - name: ACL_WHOAMI
+    autoGenerateScalerParser: false
+
+  - name: ACL_GETUSER
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: user
+          type: string
+
+  - name: ACL_SETUSER
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: -1
+      spec:
+        - name: username
+          type: string
+        - name: rules
+          type: "[]string"
+
+  - name: AUTH
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: username
+          type: string
+        - name: password
+          type: string
+
+  - name: ZADD
+    autoGenerateScalerParser: true
+    args:
+      min: 3
+      max: 3
+      spec:
+        - name: key
+          type: string
+        - name: score
+          type: float
+        - name: value
+          type: string
+
+  - name: ZRANK
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: key
+          type: string
+        - name: value
+          type: string
+
+  - name: ZRANGE
+    autoGenerateScalerParser: true
+    args:
+      min: 3
+      max: 3
+      spec:
+        - name: key
+          type: string
+        - name: start
+          type: int
+        - name: end
+          type: int
+
+  - name: ZCARD
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: key
+          type: string
+
+  - name: ZSCORE
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: key
+          type: string
+        - name: value
+          type: string
+
+  - name: ZREM
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: key
+          type: string
+        - name: value
+          type: string
+  
+  - name: WATCH
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: -1
+      spec:
+        - name: keys
+          type: "[]string"
+  
+  - name: UNWATCH
+    autoGenerateScalerParser: false
+
+  - name: GEOADD
+    autoGenerateScalerParser: true
+    args:
+      min: 4
+      max: 4
+      spec:
+        - name: key
+          type: string
+        - name: lng
+          type: float
+        - name: lat
+          type: float
+        - name: member
+          type: string
+
+  - name: GEOPOS
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: -1
+      spec:
+        - name: key
+          type: string
+        - name: locs
+          type: "[]string"

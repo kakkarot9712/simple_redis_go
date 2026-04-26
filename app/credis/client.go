@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net"
@@ -65,6 +66,10 @@ func (r *request) SetArgs(args ...Token) {
 	r.args = args
 }
 
+type Spec interface {
+	Execute(e *executor, req Request) Response
+}
+
 type Request interface {
 	Ctx() context.Context
 	Args() []Token
@@ -82,9 +87,7 @@ func NewRequest(
 		id:        GenerateString(10),
 		timestamp: time.Now(),
 		ctx:       ctx,
-		// args:      args,
-		// specs:     specs,
-		client: client,
+		client:    client,
 	}
 }
 
@@ -103,6 +106,11 @@ type client struct {
 	auth             map[string]Auth
 	currentUser      string
 	isAuthenticated  bool
+	watchList        map[string]struct {
+		Watching bool
+		Dirty    bool
+	}
+	sortedSet SortedSet
 }
 
 type Client interface {
@@ -122,6 +130,12 @@ type Client interface {
 	CurrentUser() string
 	IsAuthenticated() bool
 	Authenticate(user string, password string) bool
+	SortedSet() SortedSet
+	Watch(cmd string) *CmdNotifier
+	IsWatching(cmd string) bool
+	MakeDirty(cmd string)
+	IsDirty() bool
+	TerminateWatcher()
 }
 
 func NewClient(conn net.Conn, srv Server) Client {
@@ -137,11 +151,20 @@ func NewClient(conn net.Conn, srv Server) Client {
 		exec:             srv.Hub().Executor(),
 		currentUser:      DefaultAuth().user,
 		isAuthenticated:  !srv.Auth(DefaultAuth().user).PassRequired(),
+		sortedSet:        NewSortedSet(),
+		watchList: make(map[string]struct {
+			Watching bool
+			Dirty    bool
+		}),
 	}
 }
 
 func (c *client) Srv() Server {
 	return c.srv
+}
+
+func (c *client) SortedSet() SortedSet {
+	return c.sortedSet
 }
 
 func (c *client) IsAuthenticated() bool {
@@ -155,6 +178,54 @@ func (c *client) CancelSub(channelId string) {
 		c.subCancelMapping[channelId]()
 		delete(c.subCancelMapping, channelId)
 	}
+}
+
+func (c *client) Watch(cmd string) *CmdNotifier {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.watchList[cmd] = struct {
+		Watching bool
+		Dirty    bool
+	}{true, false}
+	fmt.Printf("Client %v: Key %v is in watchlist\n", c.id, cmd)
+	return c.srv.Hub().Watcher().Add(c.id)
+}
+
+func (c *client) IsWatching(cmd string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.watchList[cmd].Watching
+}
+
+func (c *client) MakeDirty(cmd string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.watchList[cmd].Watching {
+		d := c.watchList[cmd]
+		d.Dirty = true
+		c.watchList[cmd] = d
+	}
+}
+
+func (c *client) IsDirty() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, v := range c.watchList {
+		if v.Dirty {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *client) TerminateWatcher() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.srv.Hub().Watcher().Cancel(c.id)
+	c.watchList = make(map[string]struct {
+		Watching bool
+		Dirty    bool
+	})
 }
 
 func (c *client) AddSub(channelId string, cancel func()) {
@@ -178,10 +249,7 @@ func (c *client) WriteToMaster(cmd string, args ...Token) error {
 		return err
 	}
 	tokens = append(tokens, args...)
-	enc.Array(tokens...)
-	enc.Commit()
-
-	req := enc.Bytes()
+	req := enc.Array(tokens...)
 	c.Conn.Write(req)
 	return nil
 }
@@ -241,6 +309,7 @@ func (c *client) Authenticate(user string, password string) bool {
 
 func handle(client Client) {
 	clientCtx, clientCancel := context.WithCancel(context.Background())
+	cmdNotifier := false
 	isAuthenticated := client.IsAuthenticated()
 	user := client.CurrentUser()
 	for {
@@ -274,7 +343,7 @@ func handle(client Client) {
 		argsIndex, cmd, err := ParseCmd(tkns[:buffLen]...)
 		if !isAuthenticated && cmd != AUTH {
 			sendAndCancel(&response{
-				data: NewEncoder().SimpleError("NOAUTH Authentication required.").Commit().Bytes(),
+				data: NewEncoder().SimpleError("NOAUTH Authentication required."),
 			})
 			continue
 		}
@@ -283,20 +352,18 @@ func handle(client Client) {
 			args = tkns[argsIndex:]
 		}
 		if cmd == AUTH {
-			s := AUTHSpecs{}
-			err := s.Parse(args...)
+			s, err := ParseSpec(cmd, args...)
+			authSpec := s.(*AUTHSpecs)
 			if err != nil {
-				enc := NewEncoder().SimpleError(err.Error()).Commit()
-				client.Write(enc.Bytes())
+				client.Write(NewEncoder().SimpleError(err.Error()))
 				continue
 			}
-			if client.Authenticate(s.User, s.Password) {
+			if client.Authenticate(authSpec.Username, authSpec.Password) {
 				isAuthenticated = true
-				user = s.User
+				user = authSpec.Username
 				client.Write(NewEncoder().Ok())
 			} else {
-				enc := NewEncoder().SimpleError((&ErrAuthWrongPassword{}).Error()).Commit()
-				client.Write(enc.Bytes())
+				client.Write(NewEncoder().SimpleError((&ErrAuthWrongPassword{}).Error()))
 			}
 			continue
 		} else if cmd == EXEC {
@@ -306,7 +373,12 @@ func handle(client Client) {
 			continue
 		} else if cmd == ACL_WHOAMI {
 			sendAndCancel(&response{
-				data: NewEncoder().BulkString(&user).Commit().Bytes(),
+				data: NewEncoder().BulkString(&user),
+			})
+			continue
+		} else if cmd == WATCH && client.GetTX().IsMulti() {
+			sendAndCancel(&response{
+				data: NewEncoder().SimpleError("ERR WATCH inside MULTI is not allowed"),
 			})
 			continue
 		}
@@ -315,8 +387,7 @@ func handle(client Client) {
 		specs, err := ParseSpec(cmd, args...)
 		req.SetSpecs(specs)
 		if err != nil {
-			enc := NewEncoder().SimpleError(err.Error()).Commit()
-			client.Write(enc.Bytes())
+			client.Write(NewEncoder().SimpleError(err.Error()))
 			continue
 		}
 		if len(tkns) > 1 {
@@ -325,7 +396,7 @@ func handle(client Client) {
 
 		if !client.Srv().SubManager().IsAllowed(cmd, client.Id()) {
 			sendAndCancel(&response{
-				data: NewEncoder().SimpleError((&NoOtherCommandsInSubscribeContext{cmd: cmd}).Error()).Commit().Bytes(),
+				data: NewEncoder().SimpleError((&NoOtherCommandsInSubscribeContext{cmd: cmd}).Error()),
 			})
 			continue
 		}
@@ -360,7 +431,7 @@ func handle(client Client) {
 			currentReplicas := client.Srv().GetReplicaNums()
 			if currentReplicas >= uint(spec.NumReplicas) {
 				res = &response{
-					data: NewEncoder().Integer(int(currentReplicas)).Commit().Bytes(),
+					data: NewEncoder().Integer(int(currentReplicas)),
 				}
 			} else {
 				timer := time.NewTicker(time.Duration(timeout))
@@ -380,7 +451,7 @@ func handle(client Client) {
 				}
 				timer.Stop()
 				res = &response{
-					data: NewEncoder().Integer(int(currentReplicas)).Commit().Bytes(),
+					data: NewEncoder().Integer(int(currentReplicas)),
 				}
 			}
 			sendAndCancel(res)
@@ -398,8 +469,20 @@ func handle(client Client) {
 					client.AddSub(sub.Channel, sub.Cancel)
 					go ListenForMsgs(clientCtx, sub, client)
 				}
+			case WATCH:
+				if notifier, ok := artifacts.(*CmdNotifier); ok && !cmdNotifier {
+					// TODO: Maybe convert to atomic???
+					cmdNotifier = true
+					go func() {
+						for key := range notifier.C {
+							client.MakeDirty(key)
+						}
+						cmdNotifier = false
+					}()
+				}
 			}
 		}
 	}
 	clientCancel()
+	client.TerminateWatcher()
 }

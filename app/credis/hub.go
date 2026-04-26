@@ -28,6 +28,7 @@ type Hub interface {
 	StartWorker()
 	RequestChannel() chan Request
 	Executor() Executor
+	Watcher() Watcher
 }
 
 type hub struct {
@@ -35,17 +36,21 @@ type hub struct {
 	wg          sync.WaitGroup
 	executor    Executor
 	replHandler Server
+	watcher     Watcher
 }
 
 func NewHub() Hub {
 	handler := make(chan Request, WORKERS_LIMIT)
 	return &hub{
 		requestChan: handler,
+		watcher:     NewWatcher(),
 	}
 }
 
 func (h *hub) StartWorker() {
 	h.wg.Add(1)
+	send := h.watcher.Send()
+	go h.watcher.Start()
 	for {
 		select {
 		case req, ok := <-h.requestChan:
@@ -59,11 +64,19 @@ func (h *hub) StartWorker() {
 				continue
 			}
 			req.Client().Receive() <- res
-			// Propagate to replicas
 			cmd := req.Specs().String()
+
+			// Propagate to replicas
 			args := req.Args()
+
 			switch cmd {
-			case SET, INCR:
+			case SET:
+				spec := req.Specs().(*SETSpecs)
+				send <- spec.Key
+				h.replHandler.PropagateToReplicaGroup(cmd, args...)
+			case INCR:
+				spec := req.Specs().(*INCRSpecs)
+				send <- spec.Key
 				h.replHandler.PropagateToReplicaGroup(cmd, args...)
 			}
 
@@ -116,6 +129,7 @@ func (h *hub) Shutdown() {
 	close(h.requestChan)
 	fmt.Println("Waiting for unfinished jobs")
 	h.wg.Wait()
+	h.watcher.Stop()
 }
 
 func (h *hub) RequestChannel() chan Request {
@@ -124,4 +138,8 @@ func (h *hub) RequestChannel() chan Request {
 
 func (h *hub) Executor() Executor {
 	return h.executor
+}
+
+func (h *hub) Watcher() Watcher {
+	return h.watcher
 }

@@ -21,13 +21,12 @@ func GenerateString(size uint) string {
 	return str.String()
 }
 
-func EncodeError(err error, enc *Encoder) (bool, []byte) {
+func EncodeError(err error, enc Encoder) (bool, []byte) {
 	if err == nil {
 		return false, nil
 	}
-	enc.SimpleError(err.Error())
-	enc.Commit()
-	return true, enc.Bytes()
+	return true,
+		enc.SimpleError(err.Error())
 }
 
 func SHA256Hex(raw string) string {
@@ -37,4 +36,10 @@ func SHA256Hex(raw string) string {
 	sum.Write([]byte(raw))
 	enc.Write(sum.Sum(nil))
 	return buff.String()
+}
+
+func FlipCoin(bias float32) bool {
+	lose := bias * 100
+	flipped := rand.Intn(101)
+	return flipped > int(lose)
 }

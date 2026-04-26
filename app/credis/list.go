@@ -58,7 +58,7 @@ func (l *list[T]) Get(key string, start int64, end int64) []T {
 	if startInd < 0 {
 		startInd = 0
 	}
-	if startInd >= 0 && endInd >= 0 && startInd < endInd && lastInd > 0 && lastInd > startInd {
+	if startInd >= 0 && endInd >= 0 && startInd <= endInd && lastInd > 0 && lastInd > startInd {
 		elements = l.data[key].Get(startInd, endInd)
 	}
 	return elements

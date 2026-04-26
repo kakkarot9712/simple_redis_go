@@ -190,9 +190,7 @@ func (srv *server) PropagateToReplicaGroup(cmd string, args ...Token) {
 			NewToken(BULK_STRING, cmd),
 		}
 		tkns = append(tkns, args...)
-		enc.Array(tkns...)
-		enc.Commit()
-		repl.Write(enc.Bytes())
+		repl.Write(enc.Array(tkns...))
 	}
 }
 

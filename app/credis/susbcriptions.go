@@ -73,8 +73,8 @@ func (s *subscription) IsAllowed(cmd string, clientId string) bool {
 	defer s.mu.RUnlock()
 	allowedCmdsInSubMode := []string{
 		SUBSCRIBE,
-		PSUBSCRIBE,
-		PUNSUBSCRIBE,
+		"PSUBSCRIBE",
+		"PUNSUBSCRIBE",
 		UNSUBSCRIBE,
 		PING,
 		QUIT,
