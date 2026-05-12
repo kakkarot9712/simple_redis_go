@@ -24,6 +24,7 @@ commands:
 
   - name: SET
     autoGenerateScalerParser: true
+    write: true
     args:
       min: 2
       max: 4
@@ -50,6 +51,7 @@ commands:
   - name: INCR
     autoGenerateScalerParser: true
     timestamp: true
+    write: true
     args:
       min: 1
       max: 1
@@ -77,6 +79,7 @@ commands:
 
   - name: REPLCONF
     autoGenerateScalerParser: false
+    write: true
     args:
       min: 2
       max: 2
@@ -127,6 +130,7 @@ commands:
 
   - name: XADD
     autoGenerateScalerParser: false
+    write: true
     args:
       min: 4
       max: -1
@@ -152,6 +156,7 @@ commands:
 
   - name: RPUSH
     autoGenerateScalerParser: true
+    write: true
     args:
       min: 2
       max: -1
@@ -176,6 +181,7 @@ commands:
 
   - name: LPUSH
     autoGenerateScalerParser: true
+    write: true
     args:
       min: 2
       max: -1
@@ -196,6 +202,7 @@ commands:
 
   - name: LPOP
     autoGenerateScalerParser: true
+    write: true
     args:
       min: 1
       max: 2
@@ -208,6 +215,7 @@ commands:
 
   - name: BLPOP
     autoGenerateScalerParser: false
+    write: true
     args:
       min: 1
       max: -1
@@ -221,6 +229,7 @@ commands:
 
   - name: WAIT
     autoGenerateScalerParser: true
+    write: false
     args:
       min: 2
       max: 2
@@ -276,6 +285,7 @@ commands:
 
   - name: ACL_SETUSER
     autoGenerateScalerParser: true
+    write: true
     args:
       min: 2
       max: -1
@@ -298,6 +308,7 @@ commands:
 
   - name: ZADD
     autoGenerateScalerParser: true
+    write: true
     args:
       min: 3
       max: 3
@@ -355,6 +366,7 @@ commands:
 
   - name: ZREM
     autoGenerateScalerParser: true
+    write: true
     args:
       min: 2
       max: 2
@@ -378,6 +390,7 @@ commands:
 
   - name: GEOADD
     autoGenerateScalerParser: true
+    write: true
     args:
       min: 4
       max: 4
@@ -401,3 +414,31 @@ commands:
           type: string
         - name: locs
           type: "[]string"
+  
+  - name: GEODIST
+    autoGenerateScalerParser: true
+    args:
+      min: 3
+      max: 3
+      spec:
+        - name: key
+          type: string
+        - name: place1
+          type: string
+        - name: place2
+          type: string
+  
+  - name: GEOSEARCH
+    autoGenerateScalerParser: true
+    args:
+      min: 7
+      max: 7
+      spec:
+        - name: place
+          type: string
+        - name: fromLatLng
+          type: Location
+          afterField: FROMLONLAT
+        - name: radius
+          type: float
+          afterField: BYRADIUS

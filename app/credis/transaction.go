@@ -2,6 +2,7 @@ package credis
 
 import (
 	"context"
+	"slices"
 	"sync"
 )
 
@@ -15,7 +16,7 @@ func NewTX() *TX {
 	return &TX{}
 }
 
-func (tx *TX) Discard(client Client) []byte {
+func (tx *TX) Discard() []byte {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	var data []byte
@@ -26,12 +27,15 @@ func (tx *TX) Discard(client Client) []byte {
 		tx.multi = false
 		data = NewEncoder().Ok()
 	}
-	client.TerminateWatcher()
 	return data
 }
 
 // TODO: Improve logic
-func (tx *TX) Exec(client Client, ctx context.Context) []byte {
+func (tx *TX) Exec(
+	ctx context.Context,
+	exec *executor,
+	clientId string,
+) []byte {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	var data []byte
@@ -40,41 +44,33 @@ func (tx *TX) Exec(client Client, ctx context.Context) []byte {
 	if !tx.multi {
 		data = enc.SimpleError((&ErrExecWithoutMulti{}).Error())
 	} else {
-		for _, c := range tx.txs.Get(0, int64(tx.txs.length)) {
-			var key string
-			switch c.Specs().String() {
-			case SET:
-				spec := c.Specs().(*SETSpecs)
-				key = spec.Key
-			case INCR:
-				spec := c.Specs().(*INCRSpecs)
-				key = spec.Key
-			}
-			if key != "" && client.IsDirty() {
-				tx.txs = LinkedList[Request]{}
-				tx.multi = false
-				client.TerminateWatcher()
-				return enc.NullArray()
-			}
+		if exec.deps.Watcher.IsModified(clientId) {
+			tx.txs = LinkedList[Request]{}
+			tx.multi = false
+			exec.deps.Watcher.Cancel(clientId)
+			return NewEncoder().NullArray()
 		}
+		cleanExec := NewExec(exec.deps)
 		for {
 			r := tx.txs.Remove(0)
 			if r == nil {
 				break
 			}
-			executor := client.Executor()
 			relayReq := NewRequest(
-				client,
-				(*r).Ctx(),
+				context.Background(),
+				DefaultAuthContext(),
+				nil,
+				(*r).ClientId(),
+				nil,
 			)
 			relayReq.SetSpecs((*r).Specs())
-			out := executor.Exec(relayReq).Data()
+			out := cleanExec.Exec(relayReq).Data()
 			responses = append(responses, out)
 		}
 		data = enc.ArrayRaw(responses)
 	}
+	exec.deps.Watcher.Cancel(clientId)
 	tx.multi = false
-	client.TerminateWatcher()
 	return data
 }
 
@@ -96,4 +92,12 @@ func (tx *TX) IsMulti() bool {
 	tx.mu.RLock()
 	defer tx.mu.RUnlock()
 	return tx.multi
+}
+
+func TransactionMiddleware(e *executor, req Request, res Response) error {
+	if req.TX().IsMulti() && !slices.Contains([]string{MULTI, DISCARD, EXEC}, req.Specs().String()) {
+		res.Set(req.TX().Enqueue(req), nil)
+		return nil
+	}
+	return nil
 }

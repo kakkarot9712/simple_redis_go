@@ -53,6 +53,8 @@ const (
 	UNWATCH     = "unwatch"
 	GEOADD      = "geoadd"
 	GEOPOS      = "geopos"
+	GEODIST     = "geodist"
+	GEOSEARCH   = "geosearch"
 )
 
 var commandRegistry = map[string]GenericSpec{
@@ -60,206 +62,259 @@ var commandRegistry = map[string]GenericSpec{
 		MinArgs:   1,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     false,
 	},
 	COMMAND: {
 		MinArgs:   1,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     false,
 	},
 	PING: {
 		MinArgs:   0,
 		MaxArgs:   0,
 		Supported: true,
+		Write:     false,
 	},
 	SET: {
 		MinArgs:   2,
 		MaxArgs:   4,
 		Supported: true,
+		Write:     true,
 	},
 	GET: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	INCR: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     true,
 	},
 	MULTI: {
 		MinArgs:   0,
 		MaxArgs:   0,
 		Supported: true,
+		Write:     false,
 	},
 	EXEC: {
 		MinArgs:   0,
 		MaxArgs:   0,
 		Supported: true,
+		Write:     false,
 	},
 	DISCARD: {
 		MinArgs:   0,
 		MaxArgs:   0,
 		Supported: true,
+		Write:     false,
 	},
 	INFO: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	REPLCONF: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     true,
 	},
 	PSYNC: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     false,
 	},
 	CONFIG: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     false,
 	},
 	KEYS: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	XADD: {
 		MinArgs:   4,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     true,
 	},
 	TYPE: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	RPUSH: {
 		MinArgs:   2,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     true,
 	},
 	LRANGE: {
 		MinArgs:   3,
 		MaxArgs:   3,
 		Supported: true,
+		Write:     false,
 	},
 	LPUSH: {
 		MinArgs:   2,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     true,
 	},
 	LLEN: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	LPOP: {
 		MinArgs:   1,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     true,
 	},
 	BLPOP: {
 		MinArgs:   1,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     true,
 	},
 	WAIT: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     false,
 	},
 	SUBSCRIBE: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	UNSUBSCRIBE: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	QUIT: {
 		MinArgs:   0,
 		MaxArgs:   0,
 		Supported: true,
+		Write:     false,
 	},
 	PUBLISH: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     false,
 	},
 	ACL_WHOAMI: {
 		MinArgs:   0,
 		MaxArgs:   0,
 		Supported: true,
+		Write:     false,
 	},
 	ACL_GETUSER: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	ACL_SETUSER: {
 		MinArgs:   2,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     true,
 	},
 	AUTH: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     false,
 	},
 	ZADD: {
 		MinArgs:   3,
 		MaxArgs:   3,
 		Supported: true,
+		Write:     true,
 	},
 	ZRANK: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     false,
 	},
 	ZRANGE: {
 		MinArgs:   3,
 		MaxArgs:   3,
 		Supported: true,
+		Write:     false,
 	},
 	ZCARD: {
 		MinArgs:   1,
 		MaxArgs:   1,
 		Supported: true,
+		Write:     false,
 	},
 	ZSCORE: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     false,
 	},
 	ZREM: {
 		MinArgs:   2,
 		MaxArgs:   2,
 		Supported: true,
+		Write:     true,
 	},
 	WATCH: {
 		MinArgs:   1,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     false,
 	},
 	UNWATCH: {
 		MinArgs:   0,
 		MaxArgs:   0,
 		Supported: true,
+		Write:     false,
 	},
 	GEOADD: {
 		MinArgs:   4,
 		MaxArgs:   4,
 		Supported: true,
+		Write:     true,
 	},
 	GEOPOS: {
 		MinArgs:   1,
 		MaxArgs:   -1,
 		Supported: true,
+		Write:     false,
+	},
+	GEODIST: {
+		MinArgs:   3,
+		MaxArgs:   3,
+		Supported: true,
+		Write:     false,
+	},
+	GEOSEARCH: {
+		MinArgs:   7,
+		MaxArgs:   7,
+		Supported: true,
+		Write:     false,
 	},
 }
 
@@ -293,10 +348,15 @@ type GenericSpec struct {
 	MinArgs   int
 	MaxArgs   int
 	Supported bool
+	Write     bool
 }
 
 func GetGenericSpec(cmd string) GenericSpec {
 	return commandRegistry[cmd]
+}
+
+func Writeable(cmd string) bool {
+	return commandRegistry[cmd].Write
 }
 
 func ParseCmd(tkns ...Token) (int, string, error) {
@@ -966,6 +1026,44 @@ func (s *GEOPOSSpecs) ParseScaler(args ...Token) (int, error) {
 	return 2, nil
 }
 
+type GEODISTSpecs struct {
+	Key    string
+	Place1 string
+	Place2 string
+}
+
+func (s *GEODISTSpecs) String() string {
+	return GEODIST
+}
+func (s *GEODISTSpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Key = strVal0
+
+	strVal1 := args[1].Literal.(string)
+	s.Place1 = strVal1
+
+	strVal2 := args[2].Literal.(string)
+	s.Place2 = strVal2
+
+	return 3, nil
+}
+
+type GEOSEARCHSpecs struct {
+	Place      string
+	FromLatLng Location
+	Radius     float64
+}
+
+func (s *GEOSEARCHSpecs) String() string {
+	return GEOSEARCH
+}
+func (s *GEOSEARCHSpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Place = strVal0
+
+	return 1, nil
+}
+
 func ParseSpec(cmd string, args ...Token) (specs Specs, err error) {
 	spec := GetGenericSpec(cmd)
 	if len(args) < spec.MinArgs || (spec.MaxArgs >= 0 && len(args) > spec.MaxArgs) {
@@ -1055,6 +1153,10 @@ func ParseSpec(cmd string, args ...Token) (specs Specs, err error) {
 		specs = &GEOADDSpecs{}
 	case GEOPOS:
 		specs = &GEOPOSSpecs{}
+	case GEODIST:
+		specs = &GEODISTSpecs{}
+	case GEOSEARCH:
+		specs = &GEOSEARCHSpecs{}
 	}
 	if specs == nil {
 		return

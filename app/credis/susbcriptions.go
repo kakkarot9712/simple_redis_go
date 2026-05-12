@@ -11,30 +11,34 @@ import (
 type Sub struct {
 	C       chan string
 	Channel string
-	Cancel  func()
+	el      *llist.Element
 }
 
 type Subscription interface {
-	Subscribe(to string, clientId string) (*Sub, error)
+	Subscribe(to string, clientId string) (*Sub, int, error)
 	Count(clientId string) int
 	IsAllowed(cmd string, clientId string) bool
 	Publish(to string, msg string) int
+	Cancel(clientId, channelId string) int
 }
 
 type subscription struct {
-	mu    sync.RWMutex
-	list  map[string]*llist.List // list per channel
-	count map[string]int         // counts per client
+	// client id -> channelId -> cancel()
+	subMapping map[string]map[string]*Sub
+	mu         sync.RWMutex
+	list       map[string]*llist.List // list per channel
+	count      map[string]int         // counts per client
 }
 
 func NewSubscriptionManager() Subscription {
 	return &subscription{
-		list:  make(map[string]*llist.List),
-		count: make(map[string]int),
+		list:       make(map[string]*llist.List),
+		count:      make(map[string]int),
+		subMapping: make(map[string]map[string]*Sub),
 	}
 }
 
-func (s *subscription) Subscribe(to string, clientId string) (*Sub, error) {
+func (s *subscription) Subscribe(to string, clientId string) (*Sub, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l := s.list[to]
@@ -46,20 +50,18 @@ func (s *subscription) Subscribe(to string, clientId string) (*Sub, error) {
 	el := l.PushBack(c)
 	s.count[clientId]++
 	if el == nil {
-		return nil, errors.New("memory alloc error")
+		return nil, 0, errors.New("memory alloc error")
 	}
 	sub := Sub{
 		C:       c,
 		Channel: to,
-		Cancel: func() {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			l := s.list[to]
-			l.Remove(el)
-			s.count[clientId]--
-		},
+		el:      el,
 	}
-	return &sub, nil
+	if s.subMapping[clientId] == nil {
+		s.subMapping[clientId] = map[string]*Sub{}
+	}
+	s.subMapping[clientId][to] = &sub
+	return &sub, s.count[clientId], nil
 }
 
 func (s *subscription) Count(clientId string) int {
@@ -106,6 +108,23 @@ func (s *subscription) Publish(to string, msg string) int {
 	return count
 }
 
+func (s *subscription) Cancel(clientId, channelId string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.subMapping[clientId] == nil {
+		return s.count[clientId]
+	}
+	if s.subMapping[clientId][channelId] == nil {
+		return s.count[clientId]
+	}
+	sub := s.subMapping[clientId][channelId]
+	l := s.list[channelId]
+	l.Remove(sub.el)
+	s.count[clientId]--
+	delete(s.subMapping[clientId], channelId)
+	return s.count[clientId]
+}
+
 func ListenForMsgs(ctx context.Context, s *Sub, client Client) {
 l:
 	for {
@@ -122,5 +141,15 @@ l:
 			client.Write(enc.Commit().Bytes())
 		}
 	}
-	client.CancelSub(s.Channel)
+}
+
+func SubscriptionMiddleware(e *executor, req Request, res Response) error {
+	isAllowed := e.deps.SubManager.IsAllowed(
+		req.Specs().String(),
+		req.ClientId(),
+	)
+	if !isAllowed {
+		return &NoOtherCommandsInSubscribeContext{cmd: req.Specs().String()}
+	}
+	return nil
 }

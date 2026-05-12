@@ -25,6 +25,8 @@ type SortedSet interface {
 	Cardinality(key string) int
 	Remove(key string, value string) int
 	Get(key string, value string) *string
+	Has(key string) bool
+	List(key string) map[string]setVal
 }
 
 type skipList struct {
@@ -175,6 +177,12 @@ func (s *skipList) Get(key string, value string) *string {
 	return &val
 }
 
+func (s *skipList) Has(key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.hasmap[key]) > 0
+}
+
 func (s *skipList) Remove(key string, value string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -199,4 +207,10 @@ func (s *skipList) Remove(key string, value string) int {
 		prev.next = current.next
 	}
 	return 1
+}
+
+func (s *skipList) List(key string) map[string]setVal {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.hasmap[key]
 }

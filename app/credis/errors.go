@@ -83,3 +83,17 @@ type ErrNoAuth struct{}
 func (e *ErrNoAuth) Error() string {
 	return "NOAUTH Authentication required."
 }
+
+type ErrWatchInsideMulti struct{}
+
+func (e *ErrWatchInsideMulti) Error() string {
+	return "ERR WATCH inside MULTI is not allowed."
+}
+
+type ErrCommandNotPropagateble struct {
+	cmd string
+}
+
+func (e *ErrCommandNotPropagateble) Error() string {
+	return fmt.Sprintf("ERR %s can not be propagated.", e.cmd)
+}

@@ -63,6 +63,7 @@ func NewParser(reader *bufio.Reader) Parser {
 }
 
 func (p *parser) TryParse() (Token, int) {
+	p.err = nil
 	b, err := p.reader.ReadByte()
 	if err != nil {
 		p.err = err

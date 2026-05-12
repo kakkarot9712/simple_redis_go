@@ -1,57 +1,49 @@
 package main
 
 import (
-	"flag"
 	"fmt"
+	"log"
 	"os"
-	"strconv"
-	"strings"
+	"os/signal"
+	"syscall"
 
 	"github.com/codecrafters-io/redis-starter-go/app/credis"
 )
 
 func main() {
-	port := flag.Int("port", 6379, "Port number")
-	replicaOf := flag.String("replicaof", "", "Replica URL")
-	rdbDir := flag.String("dir", "", "RDB File Directory")
-	rdbFileNme := flag.String("dbfilename", "", "RDB File Name")
-	flag.Parse()
-	opts := []credis.ConfigOption{
-		credis.WithPort(*port),
+	flags := credis.NewFlags()
+	err := flags.Parse()
+	if err != nil {
+		log.Fatal(err)
 	}
-	isSlave := false
-	if replicaOf != nil && *replicaOf != "" {
-		replicaConnInfo := strings.Split(*replicaOf, " ")
-		if len(replicaConnInfo) != 2 {
-			fmt.Println("Invalid args passed for --replicaof")
-			os.Exit(1)
-		}
-		masterHost := replicaConnInfo[0]
-		masterPort, err := strconv.ParseUint(replicaConnInfo[1], 10, 64)
-		if err != nil {
-			fmt.Println("Invalid args passed for --replicaof")
-			os.Exit(1)
-		}
-		opts = append(opts, credis.AsReplica(
-			credis.WithLeaderHost(masterHost),
-			credis.WithLeaderPort(int(masterPort)),
-		))
-		isSlave = true
+	deps := credis.BuildDeps(flags)
+	deps.Initialize()
+	h := credis.NewHub(deps.ListStore, deps.Watcher, deps.ReplicaManager)
+	srv := credis.New(h, flags)
+	if deps.Info.IsSlave() {
+		go srv.StartReplica(flags, deps)
 	}
-	if rdbDir != nil {
-		opts = append(opts, credis.WithRDBDir(*rdbDir))
-	}
-	if rdbFileNme != nil {
-		opts = append(opts, credis.WithRDBFileName(*rdbFileNme))
-	}
-	h := credis.NewHub()
-	srv := credis.New(h, opts...)
-	if isSlave {
-		go srv.StartReplica()
-	}
-	exec := credis.NewExec(srv.Store(), srv.Info(), srv.RDB())
-	go h.Start(exec, srv)
-	err := srv.StartMaster()
+	exec := credis.NewExec(deps)
+
+	// Setup middlewares
+	exec.Use(credis.AuthMiddleware)
+	exec.Use(credis.SubscriptionMiddleware)
+	exec.Use(credis.ClientWatchableCheckerMiddleware)
+	exec.Use(credis.TransactionMiddleware)
+
+	go h.Start(exec)
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGTERM, syscall.SIGABRT, syscall.SIGINT)
+	go func() {
+		<-c
+		fmt.Println("Shutting down Gracefully")
+		srv.Hub().Shutdown()
+		deps.ReplicaManager.Stop()
+		srv.Shutdown()
+		os.Exit(0)
+	}()
+	err = srv.StartMaster(deps.AOF)
+	// defer srv.Shutdown()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

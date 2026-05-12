@@ -12,18 +12,6 @@ import (
 	"time"
 )
 
-func WithRDBDir(dir string) ConfigOption {
-	return func(r *config) {
-		r.rdbDir = dir
-	}
-}
-
-func WithRDBFileName(fileName string) ConfigOption {
-	return func(r *config) {
-		r.rdbFileName = fileName
-	}
-}
-
 const (
 	MAGIC_STRING = "REDIS"
 )
@@ -64,13 +52,13 @@ type rdbStore struct {
 }
 
 type RDBStore interface {
-	GetRDBDir() string
 	GetRDBFileName() string
 	Load()
 	Restore(str KVStore)
 	Version() int
 	Error() error
 	GetAuxField(key string) string
+	GetRDBDir() string
 }
 
 type StoreProvider interface {

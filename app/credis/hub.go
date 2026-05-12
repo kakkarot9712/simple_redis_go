@@ -21,34 +21,36 @@ var waitingArea = WaitingArea{
 
 type Hub interface {
 	Shutdown()
-	Start(
-		executor Executor,
-		replHandler Server,
-	)
+	Start(executor Executor)
 	StartWorker()
 	RequestChannel() chan Request
 	Executor() Executor
-	Watcher() Watcher
 }
 
 type hub struct {
 	requestChan chan Request
 	wg          sync.WaitGroup
 	executor    Executor
-	replHandler Server
 	watcher     Watcher
+	replHandler ReplicaManager
+	store       ListStore[string]
 }
 
-func NewHub() Hub {
+func NewHub(
+	str ListStore[string],
+	watcher Watcher,
+	replManager ReplicaManager,
+) Hub {
 	handler := make(chan Request, WORKERS_LIMIT)
 	return &hub{
 		requestChan: handler,
-		watcher:     NewWatcher(),
+		watcher:     watcher,
+		store:       str,
+		replHandler: replManager,
 	}
 }
 
 func (h *hub) StartWorker() {
-	h.wg.Add(1)
 	send := h.watcher.Send()
 	go h.watcher.Start()
 	for {
@@ -56,14 +58,14 @@ func (h *hub) StartWorker() {
 		case req, ok := <-h.requestChan:
 			if !ok {
 				h.wg.Done()
-				break
+				return
 			}
 			res := h.executor.Exec(req)
 			spec := req.Specs()
 			if spec, ok := spec.(*BLPOPSpecs); ok && !spec.Concluded {
 				continue
 			}
-			req.Client().Receive() <- res
+			req.Receive() <- res
 			cmd := req.Specs().String()
 
 			// Propagate to replicas
@@ -73,17 +75,23 @@ func (h *hub) StartWorker() {
 			case SET:
 				spec := req.Specs().(*SETSpecs)
 				send <- spec.Key
-				h.replHandler.PropagateToReplicaGroup(cmd, args...)
 			case INCR:
 				spec := req.Specs().(*INCRSpecs)
 				send <- spec.Key
-				h.replHandler.PropagateToReplicaGroup(cmd, args...)
 			}
 
-			// TODO: Fix Replica Logic
-			// if h.executor.VerifiedReplica() && !h.replHandler.IsPartOfReplicaGroup(req.Id()) {
-			// 	h.replHandler.AddToReplicaGroup(req.Id(), req)
-			// }
+			if res.DoNotPropagate() {
+				continue
+			}
+
+			if Writeable(cmd) {
+				stream := []Token{
+					NewToken(BULK_STRING, cmd),
+				}
+				stream = append(stream, args...)
+				h.replHandler.Propagator() <- NewEncoder().Array(stream...)
+			}
+
 		case key := <-keyUpdatesChan:
 			// Key has been updated! check for blocked clients
 			waitingArea.mu.Lock()
@@ -93,7 +101,7 @@ func (h *hub) StartWorker() {
 					break
 				}
 				if len(out) > 0 {
-					waitingArea.queue[key][0].req.Client().Receive() <- &response{
+					waitingArea.queue[key][0].req.Receive() <- &response{
 						data: out,
 					}
 				}
@@ -102,7 +110,7 @@ func (h *hub) StartWorker() {
 				} else {
 					delete(waitingArea.queue, key)
 				}
-				ls := h.executor.LStore()
+				ls := h.store
 				if ls.Len(key) == 0 {
 					break
 				}
@@ -114,13 +122,10 @@ func (h *hub) StartWorker() {
 	}
 }
 
-func (h *hub) Start(
-	executor Executor,
-	replHandler Server,
-) {
+func (h *hub) Start(executor Executor) {
 	h.executor = executor
-	h.replHandler = replHandler
 	for range WORKERS_LIMIT {
+		h.wg.Add(1)
 		go h.StartWorker()
 	}
 }

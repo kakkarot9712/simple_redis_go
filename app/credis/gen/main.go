@@ -42,6 +42,7 @@ type ArgsConfig struct {
 
 type CmdConfig struct {
 	Name                     string     `yaml:"name"`
+	Write                    bool       `yaml:"write"`
 	Timestamp                bool       `yaml:"timestamp"`
 	AutoGenerateScalerParser bool       `yaml:"autoGenerateScalerParser"`
 	Args                     ArgsConfig `yaml:"args"`

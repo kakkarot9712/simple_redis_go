@@ -5,15 +5,16 @@ This project is a simplified Redis clone implemented in Go, created as part of t
 ## Supported Features
 
 - Basic key/value storage using `GET` and `SET` command with values with expiry time.
-- RDB local database support for persistant storage.
-- Partial Replication support.
+- RDB local database support for persistent storage.
+- AOF (Append-Only File) support for enhanced durability with configurable sync frequencies.
+- Partial Replication support with `REPLCONF` and `PSYNC` commands.
 - List support with `RPUSH`, `LPUSH`, `LRANGE`, `LLEN`, `LPOP` and `BLPOP` commands.
 - Sorted sets support with `ZADD`, `ZRANK`, `ZRANGE`, `ZCARD`, `ZSCORE` and `ZREM` commands.
 - Streams support with `TYPE` and `XADD` commands.
 - Transaction support with `MULTI`, `INCR`, `EXEC`, `DISCARD`, `WATCH` and `UNWATCH` commands.
 - Pub/Sub support with `SUBSCRIBE`, `UNSUBSCRIBE` and `PUBLISH` commands.
 - Basic ACL support with `AUTH`, `ACL WHOAMI`, `ACL GETUSER` and `ACL SETUSER` commands.
-- Geo support with `GEOADD` command.
+-Geo support with `GEOADD`, `GEOPOS`, `GEODIST` and `GEOSEARCH` commands.
 
 ## Prerequisites
 
@@ -61,6 +62,15 @@ This will create an executable named `myredis` in your project directory.
 ./myredis --dir /tmp/redis-files --dbfilename dump.rdb
 ```
 **Note**: If you dont specify directory and file paths, server will try to fetch `dump.rdb` file from `/tmp/redis-files` directory.
+
+- You can enable AOF (Append-Only File) persistence using the `--appendonly` flag (set to `yes` to enable). Configure AOF options using:
+  - `--appendonly yes|no`: Enable/disable AOF persistence
+  - `--appendfilename`: AOF file name (default: `appendonly.aof`)
+  - `--appenddirname`: Directory for AOF file (default: `appendonlydir`)
+  - `--appendfsync`: AOF sync frequency - `everysec`, `always`, or `no` (default: `everysec`)
+```
+./myredis --appendonly yes --appendfsync everysec
+```
 
 - By default Server will assume a `master` role. To start server as replica server of some other master server you can pass `--replicaof` flag along with host and port of `master` server.
 ```
@@ -110,7 +120,9 @@ The following Redis commands are implemented in this project:
 37. `WATCH`: Watch one or more keys for transaction
 38. `UNWATCH`: Unwatch all keys
 39. `GEOADD`: Add one or more locations to a geo key
-40. `QUIT`: Close the connection
+40. `GEOPOS`: Get the positions of one or more locations
+41. `GEODIST`: Get the distance between two locations
+42. `GEOSEARCH`: Search for locations within a radius
 
 ## Limitations
 
@@ -120,6 +132,7 @@ The following Redis commands are implemented in this project:
 - RDB file loading is supported but `SAVE` command (writing RDB) is not.
 - Only RDB with single database and basic key-value storage is supported.
 - ACL support is limited to password-based authentication; command/key permissions are not enforced.
+- AOF persistence only supports the default sync frequency (`everysec`); other modes (`always` and `no`) are not yet implemented.
 
 ## Acknowledgments
 

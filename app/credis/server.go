@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -14,11 +17,13 @@ type serverInfo map[string]SectionInfo
 type ServerInfo interface {
 	Get(section string, key string) string
 	Section(section string) map[string]string
+	IsSlave() bool
 }
 
 func NewInfo() *serverInfo {
 	return &serverInfo{
 		"replication": make(SectionInfo),
+		"persistence": make(SectionInfo),
 	}
 }
 
@@ -34,59 +39,22 @@ func (info *serverInfo) set(section string, key string, value string) {
 	(*info)[section][key] = value
 }
 
-type config struct {
-	port        int
-	host        string
-	replica     *replicaConfig
-	rdbDir      string
-	rdbFileName string
-}
-
-type ConfigOption func(*config)
-
-func WithPort(port int) ConfigOption {
-	return func(opts *config) {
-		opts.port = port
-	}
-}
-
-func WithHost(host string) ConfigOption {
-	return func(opts *config) {
-		opts.host = host
-	}
-}
-
-func AsReplica(replOpts ...ReplicaConfigOptions) ConfigOption {
-	return func(opts *config) {
-		cfg := replicaConfig{}
-		for _, opt := range replOpts {
-			opt(&cfg)
-		}
-		opts.replica = &cfg
-	}
+func (info *serverInfo) IsSlave() bool {
+	return info.Get("replication", "role") == "slave"
 }
 
 type Server interface {
 	GetReplicaNums() uint
 	SubscribeToReplicaUpdates(c Client) *ReplicaUpdateSubscription
-	SubManager() Subscription
 	Hub() Hub
-	Store() dataStores
-	Info() ServerInfo
-	RDB() RDBStore
 	AddToReplicaGroup(id string, conn io.Writer)
 	PropagateToReplicaGroup(cmd string, args ...Token)
 	IsPartOfReplicaGroup(id string) bool
 	RemoveFromReplicaGroup(id string)
-	StartMaster() error
-	StartReplica()
-	Auth(user string) Auth
-}
-
-type dataStores struct {
-	KV     KVStore
-	Stream Stream
-	List   ListStore[string]
+	StartMaster(aof AOF) error
+	StartReplica(flags *Flags, d *deps)
+	Dir() string
+	Shutdown()
 }
 
 type server struct {
@@ -96,63 +64,50 @@ type server struct {
 	replica                     *replicaConfig
 	numReplicas                 uint
 	replicaUpdatesSubscriptions map[string]chan uint
-	info                        *serverInfo
 	hub                         Hub
-	subManager                  Subscription
-	store                       dataStores
 	replicas                    map[string]io.Writer
-	rdb                         RDBStore
-	auth                        map[string]Auth
+	// auth                        map[string]Auth
+	dir string
 }
 
-func New(hub Hub, opts ...ConfigOption) Server {
-	cfg := config{}
-	defaultAuth := DefaultAuth()
-	for _, opt := range opts {
-		opt(&cfg)
-	}
+func New(hub Hub, flgs *Flags) Server {
+	// defaultAuth := DefaultAuth()
 	srv := &server{
-		store: dataStores{
-			NewStore(), NewStream(), NewListStore[string](),
-		},
 		hub:                         hub,
 		host:                        "0.0.0.0",
 		port:                        6379,
 		replicaUpdatesSubscriptions: make(map[string]chan uint),
-		info:                        NewInfo(),
-		subManager:                  NewSubscriptionManager(),
-		auth: map[string]Auth{
-			defaultAuth.User(): defaultAuth,
-		},
+		dir:                         flgs.Dir,
 	}
-	if cfg.host != "" {
-		srv.host = cfg.host
+	if flgs.Host != "" {
+		srv.host = flgs.Host
 	}
-	if cfg.port != 0 {
-		srv.port = cfg.port
+	if flgs.Port != 0 {
+		srv.port = flgs.Port
 	}
-	if cfg.replica != nil {
-		srv.replica = cfg.replica
-		srv.info.set("replication", "role", "slave")
+	if flgs.ReplicaOf != "" {
+		replicaConnInfo := strings.Split(flgs.ReplicaOf, " ")
+		if len(replicaConnInfo) != 2 {
+			fmt.Println("Invalid args passed for --replicaof")
+			os.Exit(1)
+		}
+		masterHost := replicaConnInfo[0]
+		masterPort, err := strconv.ParseUint(replicaConnInfo[1], 10, 64)
+		if err != nil {
+			fmt.Println("Invalid args passed for --replicaof")
+			os.Exit(1)
+		}
+		srv.replica = &replicaConfig{
+			leaderHost: masterHost,
+			leaderPort: int(masterPort),
+		}
 	} else {
 		srv.replicas = make(map[string]io.Writer)
-		srv.info.set("replication", "role", "master")
-		srv.info.set("replication", "master_repl_offset", "0")
-		srv.info.set("replication", "master_replid", GenerateString(40))
-	}
-	if cfg.rdbDir != "" && cfg.rdbFileName != "" {
-		srv.rdb = NewRDB(cfg.rdbDir, cfg.rdbFileName)
-		srv.rdb.Load()
-		if srv.rdb.Error() != nil {
-			fmt.Printf("RDB Restore aborted: %v", srv.rdb.Error().Error())
-		} else {
-			srv.rdb.Restore(srv.store.KV)
-		}
 	}
 	return srv
 }
 
-func (srv *server) StartMaster() error {
+func (srv *server) StartMaster(aof AOF) error {
 	l, err := net.Listen("tcp", fmt.Sprintf("%v:%v", srv.host, srv.port))
 	if err != nil {
 		return fmt.Errorf("failed to bind to port %v", srv.port)
@@ -162,7 +117,7 @@ func (srv *server) StartMaster() error {
 		if err != nil {
 			return fmt.Errorf("error accepting connection: %v", err.Error())
 		}
-		go handle(NewClient(conn, srv))
+		go handle(NewClient(conn, srv.hub.RequestChannel(), DefaultAuthContext().user, false), aof)
 	}
 }
 
@@ -220,9 +175,9 @@ func (srv *server) Hub() Hub {
 	return srv.hub
 }
 
-func (srv *server) Auth(user string) Auth {
-	return srv.auth[user]
-}
+// func (srv *server) Auth(user string) Auth {
+// 	return srv.auth[user]
+// }
 
 type ReplicaUpdateSubscription struct {
 	C      <-chan uint
@@ -253,18 +208,8 @@ func (srv *server) GetReplicaNums() uint {
 	return srv.numReplicas
 }
 
-func (srv *server) SubManager() Subscription {
-	return srv.subManager
+func (srv *server) Dir() string {
+	return srv.dir
 }
 
-func (srv *server) Store() dataStores {
-	return srv.store
-}
-
-func (srv *server) Info() ServerInfo {
-	return srv.info
-}
-
-func (srv *server) RDB() RDBStore {
-	return srv.rdb
-}
+func (srv *server) Shutdown() {}

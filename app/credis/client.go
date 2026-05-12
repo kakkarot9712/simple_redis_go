@@ -4,20 +4,20 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"net"
-	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type response struct {
-	data      []byte
-	artifacts any // This will contain other data depending on command
-	isError   bool
+	data           []byte
+	artifacts      any // This will contain other data depending on command
+	isError        bool
+	doNotPropagate bool
 }
 
 func (r *response) Data() []byte {
@@ -28,18 +28,32 @@ func (r *response) Artifacts() any {
 	return r.artifacts
 }
 
+func (r *response) DoNotPropagate() bool {
+	return r.doNotPropagate
+}
+
+func (r *response) Set(data []byte, artifacts any) {
+	r.data = data
+	r.artifacts = artifacts
+}
+
 type Response interface {
+	Set(data []byte, artifacts any)
 	Data() []byte
+	DoNotPropagate() bool
 	Artifacts() any
 }
 
 type request struct {
 	id        string
+	clientId  string
+	authCtx   *authContext
+	txs       *TX
 	ctx       context.Context
 	specs     Specs
 	timestamp time.Time
 	args      []Token
-	client    Client
+	receiver  chan<- Response
 }
 
 func (r *request) Ctx() context.Context {
@@ -54,10 +68,6 @@ func (r *request) Specs() Specs {
 	return r.specs
 }
 
-func (r *request) Client() Client {
-	return r.client
-}
-
 func (r *request) SetSpecs(specs Specs) {
 	r.specs = specs
 }
@@ -66,28 +76,53 @@ func (r *request) SetArgs(args ...Token) {
 	r.args = args
 }
 
+func (r *request) Receive() chan<- Response {
+	return r.receiver
+}
+
+func (r *request) ClientId() string {
+	return r.clientId
+}
+
+func (r *request) AuthCtx() *authContext {
+	return r.authCtx
+}
+
+func (r *request) TX() *TX {
+	return r.txs
+}
+
 type Spec interface {
 	Execute(e *executor, req Request) Response
 }
 
 type Request interface {
 	Ctx() context.Context
+	ClientId() string
 	Args() []Token
 	Specs() Specs
-	Client() Client
 	SetSpecs(Specs)
 	SetArgs(args ...Token)
+	Receive() chan<- Response
+	AuthCtx() *authContext
+	TX() *TX
 }
 
 func NewRequest(
-	client Client,
 	ctx context.Context,
+	authCtx *authContext,
+	txs *TX,
+	clientId string,
+	receiver chan<- Response,
 ) Request {
 	return &request{
 		id:        GenerateString(10),
 		timestamp: time.Now(),
+		authCtx:   authCtx,
+		txs:       txs,
 		ctx:       ctx,
-		client:    client,
+		clientId:  clientId,
+		receiver:  receiver,
 	}
 }
 
@@ -95,22 +130,17 @@ type client struct {
 	mu sync.RWMutex
 	id string
 	net.Conn
-	srv              Server
-	parser           Parser
-	send             chan<- Request
-	receive          chan Response
-	tx               *TX
-	subCancelMapping map[string]func() // cancel func mapping per channel
-	exec             Executor
-	processed        *atomic.Uint64
-	auth             map[string]Auth
-	currentUser      string
-	isAuthenticated  bool
-	watchList        map[string]struct {
+	parser    Parser
+	authCtx   *authContext
+	send      chan<- Request
+	receive   chan Response
+	tx        *TX
+	exec      Executor
+	processed *atomic.Uint64
+	watchList map[string]struct {
 		Watching bool
 		Dirty    bool
 	}
-	sortedSet SortedSet
 }
 
 type Client interface {
@@ -123,72 +153,33 @@ type Client interface {
 	WriteToMaster(cmd string, args ...Token) error
 	GetTX() *TX
 	Executor() Executor
-	Srv() Server
-	CancelSub(channel string)
-	AddSub(channelId string, cancel func())
-	ProcessedAtomic() *atomic.Uint64
-	CurrentUser() string
-	IsAuthenticated() bool
-	Authenticate(user string, password string) bool
-	SortedSet() SortedSet
-	Watch(cmd string) *CmdNotifier
-	IsWatching(cmd string) bool
-	MakeDirty(cmd string)
-	IsDirty() bool
-	TerminateWatcher()
+	AuthCtx() *authContext
 }
 
-func NewClient(conn net.Conn, srv Server) Client {
+func NewClient(
+	conn net.Conn,
+	send chan<- Request,
+	user string,
+	isAuthenticated bool,
+) Client {
 	return &client{
-		id:               GenerateString(6),
-		parser:           NewParser(bufio.NewReader(conn)),
-		Conn:             conn,
-		srv:              srv,
-		tx:               NewTX(),
-		send:             srv.Hub().RequestChannel(),
-		receive:          make(chan Response),
-		subCancelMapping: make(map[string]func()),
-		exec:             srv.Hub().Executor(),
-		currentUser:      DefaultAuth().user,
-		isAuthenticated:  !srv.Auth(DefaultAuth().user).PassRequired(),
-		sortedSet:        NewSortedSet(),
+		id:      GenerateString(6),
+		parser:  NewParser(bufio.NewReader(conn)),
+		Conn:    conn,
+		tx:      NewTX(),
+		send:    send,
+		receive: make(chan Response),
+		// subCancelMapping: make(map[string]func()),
 		watchList: make(map[string]struct {
 			Watching bool
 			Dirty    bool
 		}),
+		authCtx: NewAuthContext(),
 	}
 }
 
-func (c *client) Srv() Server {
-	return c.srv
-}
-
-func (c *client) SortedSet() SortedSet {
-	return c.sortedSet
-}
-
-func (c *client) IsAuthenticated() bool {
-	return c.isAuthenticated
-}
-
-func (c *client) CancelSub(channelId string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.subCancelMapping[channelId] != nil {
-		c.subCancelMapping[channelId]()
-		delete(c.subCancelMapping, channelId)
-	}
-}
-
-func (c *client) Watch(cmd string) *CmdNotifier {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.watchList[cmd] = struct {
-		Watching bool
-		Dirty    bool
-	}{true, false}
-	fmt.Printf("Client %v: Key %v is in watchlist\n", c.id, cmd)
-	return c.srv.Hub().Watcher().Add(c.id)
+func (c *client) AuthCtx() *authContext {
+	return c.authCtx
 }
 
 func (c *client) IsWatching(cmd string) bool {
@@ -205,36 +196,6 @@ func (c *client) MakeDirty(cmd string) {
 		d.Dirty = true
 		c.watchList[cmd] = d
 	}
-}
-
-func (c *client) IsDirty() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for _, v := range c.watchList {
-		if v.Dirty {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *client) TerminateWatcher() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.srv.Hub().Watcher().Cancel(c.id)
-	c.watchList = make(map[string]struct {
-		Watching bool
-		Dirty    bool
-	})
-}
-
-func (c *client) AddSub(channelId string, cancel func()) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.subCancelMapping[channelId] == nil {
-		c.subCancelMapping[channelId] = func() {}
-	}
-	c.subCancelMapping[channelId] = cancel
 }
 
 func (c *client) WriteToMaster(cmd string, args ...Token) error {
@@ -288,30 +249,8 @@ func (c *client) Executor() Executor {
 	return c.exec
 }
 
-func (c *client) ProcessedAtomic() *atomic.Uint64 {
-	return c.processed
-}
-
-func (c *client) CurrentUser() string {
-	return c.currentUser
-}
-
-func (c *client) Authenticate(user string, password string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.Srv().Auth(user).Authenticate(password) {
-		return false
-	}
-	c.currentUser = user
-	c.isAuthenticated = true
-	return true
-}
-
-func handle(client Client) {
+func handle(client Client, aof AOF) {
 	clientCtx, clientCancel := context.WithCancel(context.Background())
-	cmdNotifier := false
-	isAuthenticated := client.IsAuthenticated()
-	user := client.CurrentUser()
 	for {
 		rawReq, _, err := client.TryParse()
 		if err != nil {
@@ -341,72 +280,22 @@ func handle(client Client) {
 
 		buffLen := uint(math.Min(float64(2), float64(len(tkns))))
 		argsIndex, cmd, err := ParseCmd(tkns[:buffLen]...)
-		if !isAuthenticated && cmd != AUTH {
-			sendAndCancel(&response{
-				data: NewEncoder().SimpleError("NOAUTH Authentication required."),
-			})
-			continue
-		}
+
 		var args []Token
 		if len(tkns) > argsIndex {
 			args = tkns[argsIndex:]
 		}
-		if cmd == AUTH {
-			s, err := ParseSpec(cmd, args...)
-			authSpec := s.(*AUTHSpecs)
-			if err != nil {
-				client.Write(NewEncoder().SimpleError(err.Error()))
-				continue
-			}
-			if client.Authenticate(authSpec.Username, authSpec.Password) {
-				isAuthenticated = true
-				user = authSpec.Username
-				client.Write(NewEncoder().Ok())
-			} else {
-				client.Write(NewEncoder().SimpleError((&ErrAuthWrongPassword{}).Error()))
-			}
-			continue
-		} else if cmd == EXEC {
-			sendAndCancel(&response{
-				data: client.GetTX().Exec(client, reqCtx),
-			})
-			continue
-		} else if cmd == ACL_WHOAMI {
-			sendAndCancel(&response{
-				data: NewEncoder().BulkString(&user),
-			})
-			continue
-		} else if cmd == WATCH && client.GetTX().IsMulti() {
-			sendAndCancel(&response{
-				data: NewEncoder().SimpleError("ERR WATCH inside MULTI is not allowed"),
-			})
-			continue
-		}
-
-		req := NewRequest(client, reqCtx)
+		req := NewRequest(reqCtx, client.AuthCtx(), client.GetTX(), client.Id(), client.Receive())
 		specs, err := ParseSpec(cmd, args...)
 		req.SetSpecs(specs)
+		req.SetArgs(args...)
 		if err != nil {
 			client.Write(NewEncoder().SimpleError(err.Error()))
 			continue
 		}
-		if len(tkns) > 1 {
-			args = append(args, tkns[1:]...)
-		}
-
-		if !client.Srv().SubManager().IsAllowed(cmd, client.Id()) {
-			sendAndCancel(&response{
-				data: NewEncoder().SimpleError((&NoOtherCommandsInSubscribeContext{cmd: cmd}).Error()),
-			})
-			continue
-		}
 
 		send := client.Send()
-		if client.GetTX().IsMulti() && !slices.Contains([]string{MULTI, DISCARD}, cmd) {
-			sendAndCancel(&response{
-				data: client.GetTX().Enqueue(req),
-			})
-		} else if spec, ok := specs.(*BLPOPSpecs); ok && spec.Lifetime != nil {
+		if spec, ok := specs.(*BLPOPSpecs); ok && spec.Lifetime != nil {
 			var res Response
 			deadline := time.Duration(*spec.Lifetime * float64(time.Second))
 			timer := time.NewTimer(deadline)
@@ -425,64 +314,38 @@ func handle(client Client) {
 			}
 			timer.Stop()
 			sendAndCancel(res)
-		} else if spec, ok := specs.(*WAITSpecs); ok {
-			timeout := spec.Timeout
-			var res Response
-			currentReplicas := client.Srv().GetReplicaNums()
-			if currentReplicas >= uint(spec.NumReplicas) {
-				res = &response{
-					data: NewEncoder().Integer(int(currentReplicas)),
-				}
-			} else {
-				timer := time.NewTicker(time.Duration(timeout))
-				sub := client.Srv().SubscribeToReplicaUpdates(client)
-				wait := true
-				for wait {
-					select {
-					case <-timer.C:
-						// Expired
-						wait = false
-					case updated := <-sub.C:
-						if updated >= uint(spec.NumReplicas) {
-							currentReplicas = updated
-							wait = false
-						}
-					}
-				}
-				timer.Stop()
-				res = &response{
-					data: NewEncoder().Integer(int(currentReplicas)),
-				}
-			}
-			sendAndCancel(res)
 		} else {
 			client.Send() <- req
 			res := <-client.Receive()
+			genericSpec := GetGenericSpec(cmd)
+			if genericSpec.Write {
+				rawCmd := strings.ToUpper(strings.Replace(cmd, "_", " ", 1))
+				tkns := []Token{NewToken(BULK_STRING, rawCmd)}
+				tkns = append(tkns, args...)
+
+				if aof.Freq() == ALAWYS {
+					aof.WriteAndFlushToAOF(NewEncoder().Array(tkns...))
+				} else {
+					aof.WriteToAOF(NewEncoder().Array(tkns...))
+				}
+			}
 			sendAndCancel(res)
 		}
 
 		// Do other tasks below using artifacts, response has been sent from below
 		if artifacts != nil {
-			switch cmd {
-			case SUBSCRIBE:
-				if sub, ok := artifacts.(*Sub); ok {
-					client.AddSub(sub.Channel, sub.Cancel)
-					go ListenForMsgs(clientCtx, sub, client)
+			switch typedArtifact := artifacts.(type) {
+			case *Sub:
+				go ListenForMsgs(clientCtx, typedArtifact, client)
+
+			case Repl:
+				for data := range typedArtifact.C {
+					client.Write(data)
 				}
-			case WATCH:
-				if notifier, ok := artifacts.(*CmdNotifier); ok && !cmdNotifier {
-					// TODO: Maybe convert to atomic???
-					cmdNotifier = true
-					go func() {
-						for key := range notifier.C {
-							client.MakeDirty(key)
-						}
-						cmdNotifier = false
-					}()
-				}
+				client.Close()
 			}
 		}
 	}
 	clientCancel()
-	client.TerminateWatcher()
+	// client.TerminateWatcher()
 }

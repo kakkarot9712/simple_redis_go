@@ -123,3 +123,46 @@ func (specs *BLPOPSpecs) Parse(args ...Token) error {
 	}
 	return nil
 }
+
+func (s *GEOSEARCHSpecs) ParseTail(args ...Token) error {
+	index := 0
+	for index < len(args)-1 {
+		subCmd := strings.ToLower(args[index].Literal.(string))
+		switch subCmd {
+		case "fromlonlat":
+			if len(args) <= index+2 {
+				return fmt.Errorf("no value for FROMLONLAT option in GEOSEARCH command")
+			}
+			subCmdVal1 := args[index+1].Literal.(string)
+			subCmdVal2 := args[index+2].Literal.(string)
+			if lng, err := strconv.ParseFloat(subCmdVal1, 64); err == nil {
+				s.FromLatLng.Lng = lng
+			} else {
+				return fmt.Errorf("ERR invalid value for location")
+			}
+			if lat, err := strconv.ParseFloat(subCmdVal2, 64); err == nil {
+				s.FromLatLng.Lat = lat
+			} else {
+				return fmt.Errorf("ERR invalid value for location")
+			}
+		case "byradius":
+			if len(args) <= index+2 {
+				return fmt.Errorf("no value for BYRADIUS option in GEOSEARCH command")
+			}
+			if val, err := strconv.ParseFloat(args[index+1].Literal.(string), 64); err == nil {
+				unit := args[index+2].Literal.(string)
+				switch unit {
+				case "m":
+					s.Radius = val
+				}
+			} else {
+				return fmt.Errorf("ERR invalid value for BYRADIUS flag")
+			}
+
+		default:
+			return fmt.Errorf("invalid option %v passed for SET", subCmd)
+		}
+		index += 3
+	}
+	return nil
+}

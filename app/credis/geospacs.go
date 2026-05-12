@@ -1,6 +1,8 @@
 package credis
 
-import "math"
+import (
+	"math"
+)
 
 const LAT = 0
 const LNG = 1
@@ -11,41 +13,43 @@ const MAX_LONGITUDE = 180
 const LATITUDE_RANGE = MAX_LATITUDE - MIN_LATITUDE
 const LONGITUDE_RANGE = MAX_LONGITUDE - MIN_LONGITUDE
 
-func ValidateCoords(val float64, typ uint8) bool {
+const EARTH_RADIUS = 6372797.560856 // in meters
+
+type Location struct {
+	Lat float64
+	Lng float64
+}
+
+func ValidateCoords(loc Location) bool {
 	isValid := false
-	switch typ {
-	case LNG:
-		isValid = val >= MIN_LONGITUDE && val <= MAX_LONGITUDE
-	case LAT:
-		isValid = val >= MIN_LATITUDE && val <= MAX_LATITUDE
+	if loc.Lat >= MIN_LATITUDE && loc.Lat <= MAX_LATITUDE &&
+		loc.Lng >= MIN_LONGITUDE && loc.Lng <= MAX_LONGITUDE {
+		isValid = true
 	}
 	return isValid
 }
 
-func normalizeCoords(val float64, typ uint8) int {
-	norms := 0.0
-	switch typ {
-	case LNG:
-		norms = math.Pow(2, 26) * (val - MIN_LONGITUDE) / LONGITUDE_RANGE
-	case LAT:
-		norms = math.Pow(2, 26) * (val - MIN_LATITUDE) / LATITUDE_RANGE
+func normalizeCoords(loc Location) Location {
+	normLoc := Location{
+		Lng: math.Pow(2, 26) * (loc.Lng - MIN_LONGITUDE) / LONGITUDE_RANGE,
+		Lat: math.Pow(2, 26) * (loc.Lat - MIN_LATITUDE) / LATITUDE_RANGE,
 	}
-	return int(norms)
+	return normLoc
 }
 
-func interleave(x int, y int) int {
+func interleave(x int32, y int32) int64 {
 	// # First, the values are spread from 32-bit to 64-bit integers.
 	// # This is done by inserting 32 zero bits in-between.
 	// # Before spread: x1  x2  ...  x31  x32
 	// # After spread:  0   x1  ...   0   x16  ... 0  x31  0  x32
-	x = spreadInt32toInt64(x)
-	y = spreadInt32toInt64(y)
-	y_shifted := y << 1
-	return x | y_shifted
+	x64 := spreadInt32toInt64(x)
+	y64 := spreadInt32toInt64(y)
+	y_shifted := y64 << 1
+	return x64 | y_shifted
 }
 
-func spreadInt32toInt64(v int) int {
-	v = v & 0xFFFFFFFF
+func spreadInt32toInt64(v32 int32) int64 {
+	v := int64(v32) & 0xFFFFFFFF
 
 	// Bitwise operations to spread 32 bits into 64 bits with zeros in-between
 	v = (v | (v << 16)) & 0x0000FFFF0000FFFF
@@ -56,47 +60,67 @@ func spreadInt32toInt64(v int) int {
 	return v
 }
 
-func Score(lat float64, lng float64) int {
-	return interleave(normalizeCoords(lat, LAT), normalizeCoords(lng, LNG))
+func Score(loc Location) int64 {
+	normLoc := normalizeCoords(loc)
+	return interleave(int32(normLoc.Lat), int32(normLoc.Lng))
 }
 
-func LatLng(scr int) (lat float64, lng float64) {
+func LatLng(scr uint64) Location {
 	// Extract longitude bits (they were shifted left by 1 during encoding)
 	y := scr >> 1
 
 	// Extract latitude bits (they were in the original positions)
 	x := scr
 	// Compact both latitude and longitude back to 32-bit integers
-	grdLat := compactInt64toInt32(y)
-	grdLng := compactInt64toInt32(x)
-	grdLatMin := MIN_LATITUDE + LATITUDE_RANGE*(float64(grdLat)/(math.Pow(2, 26)))
-	grdLatMax := MIN_LATITUDE + LATITUDE_RANGE*(float64(grdLat+1)/(math.Pow(2, 26)))
-	grdLngMIn := MIN_LONGITUDE + LONGITUDE_RANGE*(float64(grdLng)/math.Pow(2, 26))
-	grdLngMax := MIN_LONGITUDE + LONGITUDE_RANGE*(float64(grdLng+1)/(math.Pow(2, 26)))
-	lat = (grdLatMin + grdLatMax) / 2
-	lng = (grdLngMIn + grdLngMax) / 2
-	return
+	grdLat := compactInt64ToInt32(x)
+	grdLng := compactInt64ToInt32(y)
+	return convertGridNumbersToCoordinates(grdLat, grdLng)
 }
 
-func compactInt64toInt32(v int) int {
-	// Keep only the bits in even positions
-	v = v & 0x5555555555555555
-	// Before masking: w1   v1  ...   w2   v16  ... w31  v31  w32  v32
-	// After masking: 0   v1  ...   0   v16  ... 0  v31  0  v32
+func compactInt64ToInt32(v uint64) uint32 {
+	result := v & 0x5555555555555555
+	result = (result | (result >> 1)) & 0x3333333333333333
+	result = (result | (result >> 2)) & 0x0F0F0F0F0F0F0F0F
+	result = (result | (result >> 4)) & 0x00FF00FF00FF00FF
+	result = (result | (result >> 8)) & 0x0000FFFF0000FFFF
+	result = (result | (result >> 16)) & 0x00000000FFFFFFFF
+	return uint32(result)
+}
 
-	// Where w1, w2,..w31 are the digits from longitude if we're compacting latitude, or digits from latitude if we're compacting longitude
-	// So, we mask them out and only keep the relevant bits that we wish to compact
+func convertGridNumbersToCoordinates(gridLatitudeNumber, gridLongitudeNumber uint32) Location {
+	// Calculate the grid boundaries
+	gridLatitudeMin := MIN_LATITUDE + LATITUDE_RANGE*(float64(gridLatitudeNumber)/math.Pow(2, 26))
+	gridLatitudeMax := MIN_LATITUDE + LATITUDE_RANGE*(float64(gridLatitudeNumber+1)/math.Pow(2, 26))
+	gridLongitudeMin := MIN_LONGITUDE + LONGITUDE_RANGE*(float64(gridLongitudeNumber)/math.Pow(2, 26))
+	gridLongitudeMax := MIN_LONGITUDE + LONGITUDE_RANGE*(float64(gridLongitudeNumber+1)/math.Pow(2, 26))
 
-	//  ------
-	// Reverse the spreading process by shifting and masking
-	v = (v | (v >> 1)) & 0x3333333333333333
-	v = (v | (v >> 2)) & 0x0F0F0F0F0F0F0F0F
-	v = (v | (v >> 4)) & 0x00FF00FF00FF00FF
-	v = (v | (v >> 8)) & 0x0000FFFF0000FFFF
-	v = (v | (v >> 16)) & 0x00000000FFFFFFFF
+	// Calculate the center point of the grid cell
+	lat := (gridLatitudeMin + gridLatitudeMax) / 2
+	lng := (gridLongitudeMin + gridLongitudeMax) / 2
 
-	// Before compacting: 0   v1  ...   0   v16  ... 0  v31  0  v32
-	// After compacting: v1  v2  ...  v31  v32
-	// -----
-	return v
+	return Location{
+		Lat: lat,
+		Lng: lng,
+	}
+}
+
+func haversine(θ float64) float64 {
+	return .5 * (1 - math.Cos(θ))
+}
+
+type pos struct {
+	φ float64 // latitude, radians
+	ψ float64 // longitude, radians
+}
+
+func degPos(loc Location) pos {
+	return pos{loc.Lat * math.Pi / 180, loc.Lng * math.Pi / 180}
+}
+
+// Haversine dist in meters
+func Dist(loc1 Location, loc2 Location) float64 {
+	p1 := degPos(loc1)
+	p2 := degPos(loc2)
+	return 2 * EARTH_RADIUS * math.Asin(math.Sqrt(haversine(p2.φ-p1.φ)+
+		math.Cos(p1.φ)*math.Cos(p2.φ)*haversine(p2.ψ-p1.ψ)))
 }

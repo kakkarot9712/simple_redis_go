@@ -22,6 +22,7 @@ var commandRegistry = map[string]GenericSpec{
 		MinArgs: {{ .Args.Min }},
 		MaxArgs: {{ .Args.Max }},
 		Supported: true,
+		Write: {{ .Write }},
 	},
 	{{ end }}
 }
@@ -56,10 +57,15 @@ type GenericSpec struct {
 	MinArgs   int
 	MaxArgs   int
 	Supported bool
+	Write     bool
 }
 
 func GetGenericSpec(cmd string) GenericSpec {
 	return commandRegistry[cmd]
+}
+
+func Writeable(cmd string) bool {
+	return commandRegistry[cmd].Write
 }
 
 func ParseCmd(tkns ...Token) (int, string, error) {

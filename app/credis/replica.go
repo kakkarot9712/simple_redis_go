@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -30,17 +31,32 @@ func WithLeaderPort(port int) ReplicaConfigOptions {
 	}
 }
 
-func (srv *server) StartReplica() {
-	if srv.info.Get("replication", "role") != "slave" {
-		fmt.Println("won't start slave! server is in master role")
-		return
+func RestrictUnsupportedCommandMiddleware(e *executor, req Request, res Response) error {
+	supportedCommands := []string{
+		SET,
+		INCR,
+		LPOP,
+		GEOADD,
+		LPUSH,
+		XADD,
+		ZADD,
+		REPLCONF,
 	}
+	if !slices.Contains(supportedCommands, req.Specs().String()) {
+		return &ErrCommandNotPropagateble{
+			cmd: req.Specs().String(),
+		}
+	}
+	return nil
+}
+
+func (srv *server) StartReplica(flags *Flags, d *deps) {
 	conn, err := net.Dial("tcp", fmt.Sprintf("%v:%v", srv.replica.leaderHost, srv.replica.leaderPort))
 	if err != nil {
 		fmt.Printf("failed to connect to master server: %v. aborting.", err)
 		os.Exit(1)
 	}
-	redisClient := NewClient(conn, srv)
+	redisClient := NewClient(conn, srv.hub.RequestChannel(), DefaultAuthContext().user, false)
 	// Handshake 1: Send PING to master
 	redisClient.WriteToMaster(PING)
 	token, _, err := redisClient.TryParse()
@@ -86,52 +102,72 @@ func (srv *server) StartReplica() {
 		os.Exit(1)
 	}
 	redisClient.ProcessRDB()
+	exec := NewExec(d)
+	// exec.Use(RestrictUnsupportedCommandMiddleware)
+	go handleRepl(redisClient, exec, d.ReplicaManager)
+}
+
+func handleRepl(client Client, exec Executor, repl ReplicaManager) {
+	clientCtx, clientCancel := context.WithCancel(context.Background())
 	for {
-		token, bytesProcessed, err := redisClient.TryParse()
+		token, bytesProcessed, err := client.TryParse()
 		if err != nil {
-			// TODO: Actual Error
+			// Actual Error
 			if errors.Is(err, io.EOF) {
 				// Connection is closed
 				break
 			}
-			fmt.Println(err, "rs error")
+		}
+		tokenType := token.Type
+		if tokenType != ARRAY {
+			// Ignore that as of now
 			continue
 		}
-		switch token.Type {
-		case ARRAY:
-			tokens := token.Literal.([]Token)
-			exec := NewExec(srv.store, srv.info, srv.rdb)
-			if len(tokens) > 0 {
-				buffLen := uint(math.Min(float64(2), float64(len(tokens))))
-				argsIndex, cmd, err := ParseCmd(tokens[:buffLen]...)
-				if err != nil {
-					continue
-				}
-				switch cmd {
-				case SET, INCR, REPLCONF:
-					req := NewRequest(redisClient, context.TODO())
-					var args []Token
-					if len(tokens) > argsIndex {
-						args = tokens[argsIndex:]
-					}
-					req.SetArgs(args...)
-					out := exec.Exec(req)
-					if cmd == REPLCONF {
-						conn.Write(out.Data())
-					}
-				default:
-					fmt.Println("command process not allowed for command: ")
-				}
-			}
-		default:
-			fmt.Println("unsupported command pattern: ", token)
+		tkns := token.Literal.([]Token)
+		if len(tkns) == 0 {
+			continue
 		}
-		// TODO: Validate commands
-		redisClient.ProcessedAtomic().Add(uint64(bytesProcessed))
+		// var artifacts any
+		reqCtx, cancel := context.WithCancel(clientCtx)
+		sendAndCancel := func(res Response) {
+			client.Write(res.Data())
+			// artifacts = res.Artifacts()
+			cancel()
+		}
+		buffLen := uint(math.Min(float64(2), float64(len(tkns))))
+		argsIndex, cmd, err := ParseCmd(tkns[:buffLen]...)
+		var args []Token
+		if len(tkns) > argsIndex {
+			args = tkns[argsIndex:]
+		}
+		tx := NewTX()
+		req := NewRequest(
+			reqCtx,
+			client.AuthCtx(),
+			tx,
+			client.Id(),
+			nil,
+		)
+		specs, err := ParseSpec(cmd, args...)
+		req.SetSpecs(specs)
+		if err != nil {
+			sendAndCancel(&response{
+				data: NewEncoder().SimpleError(err.Error()),
+			})
+			continue
+		}
+		if len(tkns) > 1 {
+			args = append(args, tkns[1:]...)
+		}
+		req.SetArgs(args...)
+		if Writeable(cmd) {
+			res := exec.Exec(req)
+			if cmd == REPLCONF {
+				sendAndCancel(res)
+			}
+		}
+		repl.AppendProcessed(bytesProcessed)
+		cancel()
 	}
-	srv.RemoveFromReplicaGroup(redisClient.Id())
-	srv.mu.Lock()
-	srv.numReplicas--
-	srv.mu.Unlock()
-	// Connection ended
+	clientCancel()
 }

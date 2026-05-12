@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+type Middleware func(e *executor, req Request, res Response) error
+
 type BLPOPHold struct {
 	req     Request
 	resp    []string
@@ -11,15 +13,10 @@ type BLPOPHold struct {
 	timeout *time.Time
 }
 
-type RDBConfigProvider interface {
-	GetRDBFileName() string
-	GetRDBDir() string
-}
-
 type Executor interface {
+	Use(m Middleware)
 	Exec(req Request) Response
 	processHold(hold *BLPOPHold) (concluded bool, resData []byte)
-	LStore() ListStore[string]
 }
 
 type Exec interface {
@@ -28,35 +25,34 @@ type Exec interface {
 
 // Executor must remain stateless to allow concurrent usage
 type executor struct {
-	store struct {
-		KV     KVStore
-		Stream Stream
-		List   ListStore[string]
-	}
-	// TODO: Need mutex for serverInfo?
-	serverInfo ServerInfo
-	rdbConfig  RDBConfigProvider
+	deps        *deps
+	middlewares []Middleware
 }
 
-func NewExec(
-	str dataStores,
-	srvinfo ServerInfo,
-	rdbConfig RDBConfigProvider,
-) Executor {
+func NewExec(deps *deps) Executor {
 	return &executor{
-		store:      str,
-		serverInfo: srvinfo,
-		rdbConfig:  rdbConfig,
+		deps: deps,
 	}
 }
 
-func (e *executor) LStore() ListStore[string] {
-	return e.store.List
+func (e *executor) Use(m Middleware) {
+	e.middlewares = append(e.middlewares, m)
 }
 
 func (e *executor) Exec(req Request) Response {
 	// e.processed = cfg.processedBytes
 	if vp, ok := req.Specs().(Exec); ok {
+		for _, m := range e.middlewares {
+			var res response
+			err := m(e, req, &res)
+			if err != nil {
+				return &response{
+					data: NewEncoder().SimpleError(err.Error()),
+				}
+			} else if len(res.data) > 0 {
+				return &res
+			}
+		}
 		return vp.Execute(e, req)
 	} else {
 		return notImplemented(req.Specs().String())
@@ -71,7 +67,7 @@ func (e *executor) processHold(hold *BLPOPHold) (concluded bool, resData []byte)
 	default:
 		for i := 0; i < len(hold.keys); i++ {
 			key := hold.keys[i]
-			popped := e.store.List.Pop(key)
+			popped := e.deps.ListStore.Pop(key)
 			if popped == nil {
 				return
 			}

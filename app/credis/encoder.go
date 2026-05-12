@@ -103,7 +103,11 @@ func (e *encoder) array(args ...Token) *encoder {
 		return nil
 	}
 	for _, t := range args {
-		e.EncodeToken(t)
+		if t.Literal == nil {
+			_, e.err = fmt.Fprintf(e.writer, "%v%v\r\n", ARRAY, -1)
+		} else {
+			e.EncodeToken(t)
+		}
 	}
 	return e
 }
