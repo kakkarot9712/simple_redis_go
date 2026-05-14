@@ -6,8 +6,8 @@ This project is a simplified Redis clone implemented in Go, created as part of t
 
 - Basic key/value storage using `GET` and `SET` command with values with expiry time.
 - RDB local database support for persistent storage.
-- AOF (Append-Only File) support for enhanced durability with configurable sync frequencies.
-- Partial Replication support with `REPLCONF` and `PSYNC` commands.
+- AOF (Append-Only File) support for enhanced durability with default sync frequency.
+- Full Replication support with command propagation, acknowledgement tracking, and replica management.
 - List support with `RPUSH`, `LPUSH`, `LRANGE`, `LLEN`, `LPOP` and `BLPOP` commands.
 - Sorted sets support with `ZADD`, `ZRANK`, `ZRANGE`, `ZCARD`, `ZSCORE` and `ZREM` commands.
 - Streams support with `TYPE` and `XADD` commands.
@@ -88,8 +88,8 @@ The following Redis commands are implemented in this project:
 5. `CONFIG`: Get or set server configuration parameters
 6. `KEYS *`: Find all keys
 7. `INFO`: Get information and statistics about the server
-8. `REPLCONF`: Configure replication settings
-9. `PSYNC`: Internal command used for replication
+8. `REPLCONF`: Configure replication settings (supports `LISTENING-PORT`, `CAPA`, `GETACK`, and `ACK`)
+9. `PSYNC`: Internal command used for full resynchronization in replication
 10. `WAIT`: Wait for replica acknowledgements
 11. `TYPE`: Get type of a key (`string`, `stream`, `list`, or `none`)
 12. `INCR`: Increments integer value of specified key by 1
@@ -133,6 +133,7 @@ The following Redis commands are implemented in this project:
 - Only RDB with single database and basic key-value storage is supported.
 - ACL support is limited to password-based authentication; command/key permissions are not enforced.
 - AOF persistence only supports the default sync frequency (`everysec`); other modes (`always` and `no`) are not yet implemented.
+- Replica restrictions: Connected replicas can only execute `REPLCONF` command; other commands are restricted to prevent accidental modifications.
 
 ## Acknowledgments
 
