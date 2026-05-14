@@ -31,6 +31,10 @@ func (s *REPLCONFSpecs) ParseFlags(args ...Token) error {
 		s.Capability = &value
 	case "GETACK", "getack":
 		s.GetAck = &value
+	case "ACK", "ack":
+		if ack, err := strconv.ParseInt(value, 10, 64); err == nil {
+			s.Ack = &ack
+		}
 	default:
 		return fmt.Errorf("unsupported args for REPLCONF")
 	}

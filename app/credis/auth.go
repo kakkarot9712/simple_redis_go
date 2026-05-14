@@ -97,14 +97,14 @@ func (c *Auth) PassRequired(user string) bool {
 	return !slices.Contains(flags, "nopass")
 }
 
-func AuthMiddleware(e *executor, req Request, res Response) error {
+func AuthMiddleware(e *executor, req Request, res Response, terminate TerminateFunc) {
 	// If nopass flag is set, authenticate that user by default
 	flags := e.deps.Auth.Flags(req.AuthCtx())
 	if slices.Contains(flags, "nopass") {
 		req.AuthCtx().isAuthenticated = true
 	}
 	if !req.AuthCtx().isAuthenticated && req.Specs().String() != AUTH {
-		return &ErrNoAuth{}
+		terminate(&ErrNoAuth{})
+		return
 	}
-	return nil
 }

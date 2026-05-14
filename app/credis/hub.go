@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const WORKERS_LIMIT = 6
+const WORKERS_LIMIT = 20
 
 type WaitingArea struct {
 	queue map[string][]BLPOPHold
@@ -84,7 +84,7 @@ func (h *hub) StartWorker() {
 				continue
 			}
 
-			if Writeable(cmd) {
+			if Writeable(cmd) && !res.DoNotPropagate() {
 				stream := []Token{
 					NewToken(BULK_STRING, cmd),
 				}

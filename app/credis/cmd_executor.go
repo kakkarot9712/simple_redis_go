@@ -8,39 +8,39 @@ import (
 	"time"
 )
 
-func (s *ECHOSpecs) Execute(e *executor, req Request) Response {
+func (s *ECHOSpecs) Execute(e *executor, req Request, res Response) error {
 	data := NewEncoder().BulkString(&s.Data)
 	if data == nil {
-		return &response{data: NewEncoder().SimpleError("ERR encoding failed")}
+		return &ErrEncodingFailed{}
 	}
-	return &response{data: data}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (s *COMMANDSpecs) Execute(e *executor, req Request) Response {
-	return &response{
-		data:           NewEncoder().Array(),
-		doNotPropagate: true,
-	}
+func (s *COMMANDSpecs) Execute(e *executor, req Request, res Response) error {
+	res.Set(NewEncoder().Array(), nil, true)
+	return nil
 }
 
-func (s *PINGSpecs) Execute(e *executor, req Request) Response {
+func (s *PINGSpecs) Execute(e *executor, req Request, res Response) error {
 	var data []byte
 	if e.deps.SubManager.Count(req.ClientId()) > 0 {
-		res := []Token{
+		tkns := []Token{
 			NewToken(BULK_STRING, "pong"),
 			NewToken(BULK_STRING, ""),
 		}
-		data = NewEncoder().Array(res...)
+		data = NewEncoder().Array(tkns...)
 	} else {
 		data = NewEncoder().SimpleString("PONG")
 	}
 	if data == nil {
-		return &response{data: NewEncoder().SimpleError("ERR encoding failed")}
+		return &ErrEncodingFailed{}
 	}
-	return &response{data: data}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (s *CONFIGSpecs) Execute(e *executor, req Request) Response {
+func (s *CONFIGSpecs) Execute(e *executor, req Request, res Response) error {
 	action := s.Action
 	switch action {
 	case "GET", "get":
@@ -50,57 +50,56 @@ func (s *CONFIGSpecs) Execute(e *executor, req Request) Response {
 			var dir string
 			cwd, err := os.Getwd()
 			if err != nil {
-				return &response{
-					data: NewEncoder().SimpleError("ERR " + err.Error()),
-				}
+				return err
 			}
 			if e.deps.Cfg.Dir != "" {
 				dir = e.deps.Cfg.Dir
 			} else {
 				dir = cwd
 			}
-			return &response{data: NewEncoder().Array(
+			res.Set(NewEncoder().Array(
 				NewToken(BULK_STRING, "dir"),
 				NewToken(BULK_STRING, dir),
-			)}
+			), nil, false)
 		case "dbfilename":
-			return &response{data: NewEncoder().Array(
+			res.Set(NewEncoder().Array(
 				NewToken(BULK_STRING, "dbfilename"),
 				NewToken(BULK_STRING, e.deps.RDB.GetRDBFileName()),
-			)}
+			), nil, false)
 		case "appendonly":
 			isAof := "no"
 			if e.deps.AOF.Enabled() {
 				isAof = "yes"
 			}
-			return &response{data: NewEncoder().Array(
+			res.Set(NewEncoder().Array(
 				NewToken(BULK_STRING, "appendonly"),
 				NewToken(BULK_STRING, isAof),
-			)}
+			), nil, false)
 		case "appendfsync":
-			return &response{data: NewEncoder().Array(
+			res.Set(NewEncoder().Array(
 				NewToken(BULK_STRING, "appendfsync"),
 				NewToken(BULK_STRING, string(e.deps.AOF.Freq())),
-			)}
+			), nil, false)
 		case "appendfilename":
-			return &response{data: NewEncoder().Array(
+			res.Set(NewEncoder().Array(
 				NewToken(BULK_STRING, "appendfilename"),
 				NewToken(BULK_STRING, e.deps.AOF.FileName()),
-			)}
+			), nil, false)
 		case "appenddirname":
-			return &response{data: NewEncoder().Array(
+			res.Set(NewEncoder().Array(
 				NewToken(BULK_STRING, "appenddirname"),
 				NewToken(BULK_STRING, e.deps.AOF.Dir()),
-			)}
+			), nil, false)
 		default:
-			return &response{data: NewEncoder().SimpleError("ERR: key unsupoorted for command")}
+			res.Set(NewEncoder().SimpleError("ERR: key unsupoorted for command"), nil, false)
 		}
 	default:
-		return &response{data: NewEncoder().SimpleError(fmt.Sprintf("ERR: config action unsupported: %v", action))}
+		res.Set(NewEncoder().SimpleError(fmt.Sprintf("ERR: config action unsupported: %v", action)), nil, false)
 	}
+	return nil
 }
 
-func (spec *GETSpecs) Execute(e *executor, req Request) Response {
+func (spec *GETSpecs) Execute(e *executor, req Request, res Response) error {
 	val := e.deps.KVStore.Get(spec.Key, spec.CurrentTime)
 	switch val.Type {
 	case BULK_STRING, SIMPLE_STRING:
@@ -112,16 +111,20 @@ func (spec *GETSpecs) Execute(e *executor, req Request) Response {
 			enc = NewEncoder().BulkString(&data)
 		}
 		if enc == nil {
-			return &response{data: NewEncoder().SimpleError("ERR encoding failed")}
+			return &ErrEncodingFailed{}
 		}
-		return &response{data: enc}
+		res.Set(enc, nil, false)
 	default:
 		// TODO: support other type of values
-		return &response{data: NewEncoder().SimpleError(fmt.Sprintf("ERR unsupported data as value for GET: %v", val.Literal))}
+		return &ErrUnsupportedDataType{
+			cmd:      GET,
+			dataType: val.Literal,
+		}
 	}
+	return nil
 }
 
-func (spec *INCRSpecs) Execute(e *executor, req Request) Response {
+func (spec *INCRSpecs) Execute(e *executor, req Request, res Response) error {
 	key := spec.Key
 	val := e.deps.KVStore.Get(key, spec.CurrentTime)
 
@@ -135,36 +138,39 @@ func (spec *INCRSpecs) Execute(e *executor, req Request) Response {
 			value := NewToken(BULK_STRING, fmt.Sprintf("%v", 1))
 			e.deps.KVStore.Set(key, value, nil)
 			if hasErr, data := EncodeError(e.deps.KVStore.Error(), NewEncoder()); hasErr {
-				return &response{data: data}
+				res.Set(data, nil, false)
+				return nil
 			}
 		} else {
 			num, err := strconv.ParseInt(val.Literal.(string), 10, 64)
 			if err != nil {
-				if hasErr, data := EncodeError(&ErrNotInteger{
+				return &ErrNotInteger{
 					data: num,
-				}, NewEncoder()); hasErr {
-					return &response{data: data}
 				}
-				return nil
 			}
 			updaredNum = int(num) + 1
 			updatedValue := NewToken(BULK_STRING, fmt.Sprintf("%v", updaredNum))
 			e.deps.KVStore.Update(key, updatedValue)
 			if hasErr, data := EncodeError(e.deps.KVStore.Error(), NewEncoder()); hasErr {
-				return &response{data: data}
+				res.Set(data, nil, false)
+				return nil
 			}
 		}
 		enc := NewEncoder().Integer(updaredNum)
 		if enc == nil {
-			return &response{data: NewEncoder().SimpleError("ERR encoding failed")}
+			return &ErrEncodingFailed{}
 		}
-		return &response{data: enc}
+		res.Set(enc, nil, false)
 	default:
-		return &response{data: NewEncoder().SimpleError(fmt.Sprintf("ERR unsupported value for command INCR: %v", val.Literal))}
+		return &ErrUnsupportedDataType{
+			cmd:      INCR,
+			dataType: val.Literal,
+		}
 	}
+	return nil
 }
 
-func (spec *INFOSpecs) Execute(e *executor, req Request) Response {
+func (spec *INFOSpecs) Execute(e *executor, req Request, res Response) error {
 	section := spec.Section
 	var resp strings.Builder
 	sectionInfo := e.deps.Info.Section(section)
@@ -174,38 +180,44 @@ func (spec *INFOSpecs) Execute(e *executor, req Request) Response {
 	data := resp.String()
 	enc := NewEncoder().BulkString(&data)
 	if enc == nil {
-		return &response{data: NewEncoder().SimpleError("ERR encoding failed")}
+		return &ErrEncodingFailed{}
 	}
-	return &response{data: enc}
+	res.Set(enc, nil, false)
+	return nil
 }
 
-func (spec *KEYSSpecs) Execute(e *executor, req Request) Response {
+func (spec *KEYSSpecs) Execute(e *executor, req Request, res Response) error {
 	filter := spec.Filter
 	if filter == "*" {
 		keys := []Token{}
 		for k := range e.deps.KVStore.Keys() {
 			keys = append(keys, NewToken(BULK_STRING, k))
 		}
-		return &response{data: NewEncoder().Array(keys...)}
-	} else {
-		return &response{data: NewEncoder().SimpleError(fmt.Sprintf("ERR unknown subcommand for KEYS: %v", filter))}
+		res.Set(NewEncoder().Array(keys...), nil, false)
+		return nil
+	}
+	return &ErrUnsupportedDataType{
+		cmd:      KEYS,
+		dataType: spec.Filter,
 	}
 }
 
-func (spec *LLENSpecs) Execute(e *executor, req Request) Response {
-	return &response{data: NewEncoder().Integer(e.deps.ListStore.Len(spec.Key))}
+func (spec *LLENSpecs) Execute(e *executor, req Request, res Response) error {
+	res.Set(NewEncoder().Integer(e.deps.ListStore.Len(spec.Key)), nil, false)
+	return nil
 }
 
-func (spec *LRANGESpecs) Execute(e *executor, req Request) Response {
+func (spec *LRANGESpecs) Execute(e *executor, req Request, res Response) error {
 	data := e.deps.ListStore.Get(spec.Key, spec.Start, spec.End)
 	dataTokens := []Token{}
 	for _, el := range data {
 		dataTokens = append(dataTokens, NewToken(BULK_STRING, el))
 	}
-	return &response{data: NewEncoder().Array(dataTokens...)}
+	res.Set(NewEncoder().Array(dataTokens...), nil, false)
+	return nil
 }
 
-func (spec *PSYNCSpecs) Execute(e *executor, req Request) Response {
+func (spec *PSYNCSpecs) Execute(e *executor, req Request, res Response) error {
 	replicaId := spec.ReplicaId
 	offset := spec.Offset
 	data := "FULLRESYNC "
@@ -224,9 +236,10 @@ func (spec *PSYNCSpecs) Execute(e *executor, req Request) Response {
 		0x2E, 0x30, 0xFA, 0x0A, 0x72, 0x65, 0x64, 0x69, 0x73, 0x2D, 0x62, 0x69,
 		0x74, 0x73, 0xC0, 0x40, 0xFA, 0x05, 0x63, 0x74, 0x69, 0x6D, 0x65, 0xC2,
 		0x6D, 0x08, 0xBC, 0x65, 0xFA, 0x08, 0x75, 0x73, 0x65, 0x64, 0x2D, 0x6D,
-		0x65, 0x6D, 0xC2, 0xB0, 0xC4, 0x10, 0x00, 0xFA, 0x08, 0x61, 0x6F,
-		0x66, 0x2D, 0x62, 0x61, 0x73, 0x65, 0xC0, 0x00, 0xFF, 0xF0, 0x6E, 0x3B, 0xFE,
-		0xC0, 0xFF, 0x5A, 0xA2}
+		0x65, 0x6D, 0xC2, 0xB0, 0xC4, 0x10, 0x00, 0xFA, 0x08, 0x61, 0x6F, 0x66,
+		0x2D, 0x62, 0x61, 0x73, 0x65, 0xC0, 0x00, 0xFF, 0xF0, 0x6E, 0x3B, 0xFE,
+		0xC0, 0xFF, 0x5A, 0xA2,
+	}
 
 	rsyncResp := NewEncoder().SimpleString(data)
 	emptyRdbBuff := fmt.Sprintf("$%v\r\n", len(emptyRdb))
@@ -234,19 +247,17 @@ func (spec *PSYNCSpecs) Execute(e *executor, req Request) Response {
 	buff = append(buff, rsyncResp...)
 	buff = append(buff, []byte(emptyRdbBuff)...)
 	buff = append(buff, emptyRdb...)
-	repl := e.deps.ReplicaManager.Add(req.ClientId())
-	return &response{data: buff, artifacts: repl, doNotPropagate: true}
+	e.deps.ReplicaManager.Add(req.Client())
+	res.Set(buff, nil, true)
+	return nil
 }
 
-func (spec *REPLCONFSpecs) Execute(e *executor, req Request) Response {
+func (spec *REPLCONFSpecs) Execute(e *executor, req Request, res Response) error {
 	var data []byte
-	var doNotPropagate bool
 	if spec.ListeningPort != nil {
-		data = NewEncoder().SimpleString("OK")
-		doNotPropagate = true
+		data = NewEncoder().Ok()
 	} else if spec.Capability != nil {
-		data = NewEncoder().SimpleString("OK")
-		doNotPropagate = true
+		data = NewEncoder().Ok()
 	} else if spec.GetAck != nil {
 		bytesCount := e.deps.ReplicaManager.Processed()
 		data = NewEncoder().Array(
@@ -254,30 +265,47 @@ func (spec *REPLCONFSpecs) Execute(e *executor, req Request) Response {
 			NewToken(BULK_STRING, "ACK"),
 			NewToken(BULK_STRING, fmt.Sprintf("%v", bytesCount)),
 		)
+	} else if spec.Ack != nil {
+		// Keep record of acks from all replicas
+		e.deps.ReplicaManager.UpdateAcks(req.ClientId(), *spec.Ack)
+		res.Set(nil, req.Client(), true)
+		return nil
 	}
 	if data == nil {
-		return &response{data: NewEncoder().SimpleString("OK"), doNotPropagate: doNotPropagate}
+		data = NewEncoder().Ok()
 	}
-	return &response{data: data, doNotPropagate: doNotPropagate}
+	res.Set(data, nil, true)
+	return nil
 }
 
-func (spec *WAITSpecs) Execute(e *executor, req Request) Response {
+func (spec *WAITSpecs) Execute(e *executor, req Request, res Response) error {
 	var data []byte
 	timer := time.NewTimer(time.Duration(spec.Timeout) * time.Millisecond)
 	minReplica := spec.NumReplicas
-	// masterPropagatedBytes := e.deps.ReplicaManager.Processed()
+	masterPropagatedBytes := e.deps.ReplicaManager.Processed()
+	if masterPropagatedBytes == 0 {
+		// No commands passed
+		data = NewEncoder().Integer(e.deps.ReplicaManager.NumReplicas())
+		res.Set(data, nil, false)
+		return nil
+	}
 	setisfiedMinReplCount := make(chan int)
-	// var currentReplCount int
+	var currentReplCount int
 	terminate := make(chan bool)
+	e.deps.ReplicaManager.RequestAckFromAllRepl()
 	go func() {
 		for {
 			select {
 			case <-terminate:
 				return
 			default:
-				currentReplCount := e.deps.ReplicaManager.NumReplicas()
+				count := e.deps.ReplicaManager.GetAcksFromReplica(
+					int(spec.NumReplicas),
+					int64(masterPropagatedBytes),
+				)
+				currentReplCount = count
 				if currentReplCount >= int(minReplica) {
-					setisfiedMinReplCount <- currentReplCount
+					setisfiedMinReplCount <- count
 					return
 				}
 			}
@@ -292,45 +320,47 @@ func (spec *WAITSpecs) Execute(e *executor, req Request) Response {
 		terminate <- true
 		close(terminate)
 		close(setisfiedMinReplCount)
-		data = NewEncoder().Integer(e.deps.ReplicaManager.NumReplicas())
+		data = NewEncoder().Integer(currentReplCount)
 		// case true:
 	}
-	return &response{
-		data: data,
-	}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (spec *RPUSHSpecs) Execute(e *executor, req Request) Response {
+func (spec *RPUSHSpecs) Execute(e *executor, req Request, res Response) error {
 	go func() {
 		keyUpdatesChan <- spec.Key
 	}()
-	return &response{data: NewEncoder().Integer(e.deps.ListStore.Push(spec.Key, spec.Elements))}
+	res.Set(NewEncoder().Integer(e.deps.ListStore.Push(spec.Key, spec.Elements)), nil, false)
+	return nil
 }
 
-func (s *EXECSpecs) Execute(e *executor, req Request) Response {
-	return &response{
-		data: req.TX().Exec(req.Ctx(), e, req.ClientId()),
-	}
+func (s *EXECSpecs) Execute(e *executor, req Request, res Response) error {
+	res.Set(req.TX().Exec(req.Ctx(), e, req.ClientId()), nil, false)
+	return nil
 }
 
-func (s *MULTISpecs) Execute(e *executor, req Request) Response {
-	return &response{data: req.TX().Multi()}
+func (s *MULTISpecs) Execute(e *executor, req Request, res Response) error {
+	res.Set(req.TX().Multi(), nil, false)
+	return nil
 }
 
-func (s *DISCARDSpecs) Execute(e *executor, req Request) Response {
+func (s *DISCARDSpecs) Execute(e *executor, req Request, res Response) error {
 	data := req.TX().Discard()
 	e.deps.Watcher.Cancel(req.ClientId())
-	return &response{data: data}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (spec *LPUSHSpecs) Execute(e *executor, req Request) Response {
+func (spec *LPUSHSpecs) Execute(e *executor, req Request, res Response) error {
 	go func() {
 		keyUpdatesChan <- spec.Key
 	}()
-	return &response{data: NewEncoder().Integer(e.deps.ListStore.Prepend(spec.Key, spec.Elements))}
+	res.Set(NewEncoder().Integer(e.deps.ListStore.Prepend(spec.Key, spec.Elements)), nil, false)
+	return nil
 }
 
-func (spec *SETSpecs) Execute(e *executor, req Request) Response {
+func (spec *SETSpecs) Execute(e *executor, req Request, res Response) error {
 	if spec.Px != nil {
 		exp := time.Now().Add(time.Duration(*spec.Px * uint64(time.Millisecond)))
 		e.deps.KVStore.Set(spec.Key, spec.Value, &exp)
@@ -339,12 +369,13 @@ func (spec *SETSpecs) Execute(e *executor, req Request) Response {
 	}
 
 	if e.deps.KVStore.Error() != nil {
-		return &response{data: NewEncoder().SimpleError(fmt.Sprintf("ERR: %v", e.deps.KVStore.Error()))}
+		return fmt.Errorf("ERR: %w", e.deps.KVStore.Error())
 	}
-	return &response{data: NewEncoder().Ok()}
+	res.Set(NewEncoder().Ok(), nil, false)
+	return nil
 }
 
-func (spec *TYPESpecs) Execute(e *executor, req Request) Response {
+func (spec *TYPESpecs) Execute(e *executor, req Request, res Response) error {
 	key := spec.Key
 	var data []byte
 	if e.deps.StreamStore.IsStreamKey(key) {
@@ -355,12 +386,13 @@ func (spec *TYPESpecs) Execute(e *executor, req Request) Response {
 		data = NewEncoder().SimpleString("none")
 	}
 	if data == nil {
-		return &response{data: NewEncoder().SimpleError("ERR encoding failed")}
+		return &ErrEncodingFailed{}
 	}
-	return &response{data: data}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (spec *XADDSpecs) Execute(e *executor, req Request) Response {
+func (spec *XADDSpecs) Execute(e *executor, req Request, res Response) error {
 	createStreamOpts := []AddStreamOpts{}
 	if spec.Id == nil && spec.Seq == nil {
 		// TODO: Generate new id and seq
@@ -381,12 +413,13 @@ func (spec *XADDSpecs) Execute(e *executor, req Request) Response {
 	}
 	generatedId, err := e.deps.StreamStore.CreateOrUpdateStream(spec.Key, spec.KVs, createStreamOpts...)
 	if err != nil {
-		return &response{data: NewEncoder().SimpleError(fmt.Sprintf("ERR: %v", err))}
+		return fmt.Errorf("ERR: %w", err)
 	}
-	return &response{data: NewEncoder().BulkString(&generatedId)}
+	res.Set(NewEncoder().BulkString(&generatedId), nil, false)
+	return nil
 }
 
-func (spec *LPOPSpecs) Execute(e *executor, req Request) Response {
+func (spec *LPOPSpecs) Execute(e *executor, req Request, res Response) error {
 	var data []byte
 	if spec.AmountToRemove != nil {
 		elements := []Token{}
@@ -402,10 +435,11 @@ func (spec *LPOPSpecs) Execute(e *executor, req Request) Response {
 		popped := e.deps.ListStore.Pop(spec.Key)
 		data = NewEncoder().BulkString(popped)
 	}
-	return &response{data: data}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (spec *BLPOPSpecs) Execute(e *executor, req Request) Response {
+func (spec *BLPOPSpecs) Execute(e *executor, req Request, res Response) error {
 	removedElements := []string{}
 	for i := 0; i < len(spec.Keys); i++ {
 		key := spec.Keys[0]
@@ -427,53 +461,53 @@ func (spec *BLPOPSpecs) Execute(e *executor, req Request) Response {
 		tokens = append(tokens, NewToken(BULK_STRING, data))
 	}
 	spec.Concluded = true
-	return &response{data: NewEncoder().Array(tokens...)}
+	res.Set(NewEncoder().Array(tokens...), nil, false)
+	return nil
 }
 
-func (s *SUBSCRIBESpecs) Execute(e *executor, req Request) Response {
+func (s *SUBSCRIBESpecs) Execute(e *executor, req Request, res Response) error {
 	sub, count, err := e.deps.SubManager.Subscribe(s.Key, req.ClientId())
 	if err != nil {
-		return &response{
-			data:      NewEncoder().SimpleError(fmt.Sprintf("ERR: %v", err.Error())),
-			artifacts: sub,
-		}
+		return fmt.Errorf("ERR: %w", err)
 	}
 	tokens := []Token{
 		NewToken(BULK_STRING, "subscribe"),
 		NewToken(BULK_STRING, s.Key),
 		NewToken(INTEGER, count),
 	}
-	return &response{data: NewEncoder().Array(tokens...), artifacts: sub}
+	res.Set(NewEncoder().Array(tokens...), sub, false)
+	return nil
 }
 
-func (s *PUBLISHSpecs) Execute(e *executor, req Request) Response {
+func (s *PUBLISHSpecs) Execute(e *executor, req Request, res Response) error {
 	count := e.deps.SubManager.Publish(s.Key, s.Message)
-	return &response{data: NewEncoder().Integer(count)}
+	res.Set(NewEncoder().Integer(count), nil, false)
+	return nil
 }
 
-func (s *UNSUBSCRIBESpecs) Execute(e *executor, req Request) Response {
+func (s *UNSUBSCRIBESpecs) Execute(e *executor, req Request, res Response) error {
 	count := e.deps.SubManager.Cancel(req.ClientId(), s.Key)
 	tokens := []Token{
 		NewToken(BULK_STRING, "unsubscribe"),
 		NewToken(BULK_STRING, s.Key),
 		NewToken(INTEGER, count),
 	}
-	return &response{data: NewEncoder().Array(tokens...)}
+	res.Set(NewEncoder().Array(tokens...), nil, false)
+	return nil
 }
 
-func (s *AUTHSpecs) Execute(e *executor, req Request) Response {
+func (s *AUTHSpecs) Execute(e *executor, req Request, res Response) error {
 	var data []byte
 	if e.deps.Auth.Authenticate(req.AuthCtx(), s.Username, s.Password) {
 		data = NewEncoder().Ok()
 	} else {
-		data = NewEncoder().SimpleError((&ErrAuthWrongPassword{}).Error())
+		return &ErrAuthWrongPassword{}
 	}
-	return &response{
-		data: data,
-	}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (s *ACL_SETUSERSpecs) Execute(e *executor, req Request) Response {
+func (s *ACL_SETUSERSpecs) Execute(e *executor, req Request, res Response) error {
 	enc := NewEncoder()
 	for _, a := range s.Rules {
 		char := a[0]
@@ -482,20 +516,24 @@ func (s *ACL_SETUSERSpecs) Execute(e *executor, req Request) Response {
 			e.deps.Auth.SetPassword(s.Username, a[1:])
 			// SetPassword
 		default:
+			return &ErrUnsupportedDataType{
+				cmd:      ACL_SETUSER,
+				dataType: s.Rules,
+			}
 			// tobe implemented
 		}
 	}
-	return &response{data: enc.Ok()}
+	res.Set(enc.Ok(), nil, false)
+	return nil
 }
 
-func (s *ACL_WHOAMISpecs) Execute(e *executor, req Request) Response {
+func (s *ACL_WHOAMISpecs) Execute(e *executor, req Request, res Response) error {
 	currentUser := req.AuthCtx().user
-	return &response{
-		data: NewEncoder().BulkString(&currentUser),
-	}
+	res.Set(NewEncoder().BulkString(&currentUser), nil, false)
+	return nil
 }
 
-func (s *ACL_GETUSERSpecs) Execute(e *executor, req Request) Response {
+func (s *ACL_GETUSERSpecs) Execute(e *executor, req Request, res Response) error {
 	user := e.deps.Auth.AuthenticatedUser(req.AuthCtx())
 	flags := []Token{}
 	for _, f := range user.flags {
@@ -511,10 +549,11 @@ func (s *ACL_GETUSERSpecs) Execute(e *executor, req Request) Response {
 		NewToken(BULK_STRING, "passwords"),
 		NewToken(ARRAY, passwords),
 	}
-	return &response{data: NewEncoder().Array(tokens...)}
+	res.Set(NewEncoder().Array(tokens...), nil, false)
+	return nil
 }
 
-func (s *ZRANKSpecs) Execute(e *executor, req Request) Response {
+func (s *ZRANKSpecs) Execute(e *executor, req Request, res Response) error {
 	var rank int
 	rank = e.deps.SortedSet.Rank(s.Key, s.Value)
 	var data []byte
@@ -523,98 +562,86 @@ func (s *ZRANKSpecs) Execute(e *executor, req Request) Response {
 	} else {
 		data = NewEncoder().Integer(int(rank))
 	}
-	return &response{
-		data: data,
-	}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (s *ZRANGESpecs) Execute(e *executor, req Request) Response {
+func (s *ZRANGESpecs) Execute(e *executor, req Request, res Response) error {
 	elems := e.deps.SortedSet.Range(s.Key, s.Start, s.End)
 	tkns := []Token{}
 	for _, e := range elems {
 		tkns = append(tkns, NewToken(BULK_STRING, e))
 	}
-	return &response{
-		data: NewEncoder().Array(tkns...),
-	}
+	res.Set(NewEncoder().Array(tkns...), nil, false)
+	return nil
 }
 
-func (s *ZSCORESpecs) Execute(e *executor, req Request) Response {
+func (s *ZSCORESpecs) Execute(e *executor, req Request, res Response) error {
 	scr := e.deps.SortedSet.Get(s.Key, s.Value)
-	return &response{
-		data: NewEncoder().BulkString(scr),
-	}
+	res.Set(NewEncoder().BulkString(scr), nil, false)
+	return nil
 }
 
-func (s *ZCARDSpecs) Execute(e *executor, req Request) Response {
+func (s *ZCARDSpecs) Execute(e *executor, req Request, res Response) error {
 	card := e.deps.SortedSet.Cardinality(s.Key)
-	return &response{
-		data: NewEncoder().Integer(card),
-	}
+	res.Set(NewEncoder().Integer(card), nil, false)
+	return nil
 }
 
-func (s *ZREMSpecs) Execute(e *executor, req Request) Response {
+func (s *ZREMSpecs) Execute(e *executor, req Request, res Response) error {
 	card := e.deps.SortedSet.Remove(s.Key, s.Value)
-	return &response{
-		data: NewEncoder().Integer(card),
-	}
+	res.Set(NewEncoder().Integer(card), nil, false)
+	return nil
 }
 
-func (s *ZADDSpecs) Execute(e *executor, req Request) Response {
+func (s *ZADDSpecs) Execute(e *executor, req Request, res Response) error {
 	newLen := e.deps.SortedSet.Add(s.Key, s.Value, s.Score)
-	return &response{data: NewEncoder().Integer(int(newLen))}
+	res.Set(NewEncoder().Integer(int(newLen)), nil, false)
+	return nil
 }
 
-func (s *WATCHSpecs) Execute(e *executor, req Request) Response {
+func (s *WATCHSpecs) Execute(e *executor, req Request, res Response) error {
 	enc := NewEncoder()
 	var data []byte
 	if req.TX().IsMulti() {
-		data = NewEncoder().SimpleError("ERR WATCH inside MULTI is not allowed")
+		return &ErrWatchInsideMulti{}
 	} else {
 		e.deps.Watcher.Add(req.ClientId(), s.Keys...)
 		data = enc.Ok()
 	}
-	return &response{
-		data: data,
-		// artifacts: notifier,
-	}
+	res.Set(data, nil, false)
+	return nil
 }
 
-func (s *UNWATCHSpecs) Execute(e *executor, req Request) Response {
+func (s *UNWATCHSpecs) Execute(e *executor, req Request, res Response) error {
 	enc := NewEncoder()
 	e.deps.Watcher.Cancel(req.ClientId())
-	return &response{
-		data:      enc.Ok(),
-		artifacts: false,
-	}
+	res.Set(enc.Ok(), nil, false)
+	return nil
 }
 
-func (s *GEOADDSpecs) Execute(e *executor, req Request) Response {
-	var data []byte
+func (s *GEOADDSpecs) Execute(e *executor, req Request, res Response) error {
 	loc := Location{
 		Lat: s.Lat,
 		Lng: s.Lng,
 	}
 	if !ValidateCoords(loc) {
-		data = NewEncoder().SimpleError(fmt.Sprintf("ERR invalid longitude,latitude pair %v,%v", s.Lng, s.Lat))
-	} else {
-		score := Score(loc)
-		zaddSpec := ZADDSpecs{
-			Key:   s.Key,
-			Value: s.Member,
-			Score: float64(score),
+		return &ErrInvalidCoords{
+			Lat: s.Lat,
+			Lng: s.Lng,
 		}
-		res := zaddSpec.Execute(e, req)
-		data = res.Data()
 	}
-
-	return &response{
-		data: data,
+	score := Score(loc)
+	zaddSpec := ZADDSpecs{
+		Key:   s.Key,
+		Value: s.Member,
+		Score: float64(score),
 	}
+	zaddSpec.Execute(e, req, res)
+	return nil
 }
 
-func (s *GEOPOSSpecs) Execute(e *executor, req Request) Response {
-	var data []byte
+func (s *GEOPOSSpecs) Execute(e *executor, req Request, res Response) error {
 	responses := []Token{}
 	for _, k := range s.Locs {
 		scr := e.deps.SortedSet.Get(s.Key, k)
@@ -632,14 +659,11 @@ func (s *GEOPOSSpecs) Execute(e *executor, req Request) Response {
 			fmt.Println(err)
 		}
 	}
-
-	data = NewEncoder().Array(responses...)
-	return &response{
-		data: data,
-	}
+	res.Set(NewEncoder().Array(responses...), nil, false)
+	return nil
 }
 
-func (s *GEODISTSpecs) Execute(e *executor, req Request) Response {
+func (s *GEODISTSpecs) Execute(e *executor, req Request, res Response) error {
 	scr1 := e.deps.SortedSet.Get(s.Key, s.Place1)
 	scr2 := e.deps.SortedSet.Get(s.Key, s.Place2)
 	var loc1, loc2 Location
@@ -650,12 +674,11 @@ func (s *GEODISTSpecs) Execute(e *executor, req Request) Response {
 		loc2 = LatLng(uint64(score2))
 	}
 	dist := fmt.Sprintf("%.4f", Dist(loc1, loc2))
-	return &response{
-		data: NewEncoder().BulkString(&dist),
-	}
+	res.Set(NewEncoder().BulkString(&dist), nil, false)
+	return nil
 }
 
-func (s *GEOSEARCHSpecs) Execute(e *executor, req Request) Response {
+func (s *GEOSEARCHSpecs) Execute(e *executor, req Request, res Response) error {
 	places := e.deps.SortedSet.List(s.Place)
 	placesInRadius := []Token{}
 	for p, v := range places {
@@ -665,7 +688,6 @@ func (s *GEOSEARCHSpecs) Execute(e *executor, req Request) Response {
 			placesInRadius = append(placesInRadius, NewToken(BULK_STRING, p))
 		}
 	}
-	return &response{
-		data: NewEncoder().Array(placesInRadius...),
-	}
+	res.Set(NewEncoder().Array(placesInRadius...), nil, false)
+	return nil
 }

@@ -51,6 +51,7 @@ func (tx *TX) Exec(
 			return NewEncoder().NullArray()
 		}
 		cleanExec := NewExec(exec.deps)
+		cleanExec.Use(ExecutorMiddleware)
 		for {
 			r := tx.txs.Remove(0)
 			if r == nil {
@@ -60,7 +61,7 @@ func (tx *TX) Exec(
 				context.Background(),
 				DefaultAuthContext(),
 				nil,
-				(*r).ClientId(),
+				(*r).Client(),
 				nil,
 			)
 			relayReq.SetSpecs((*r).Specs())
@@ -94,10 +95,10 @@ func (tx *TX) IsMulti() bool {
 	return tx.multi
 }
 
-func TransactionMiddleware(e *executor, req Request, res Response) error {
+func TransactionMiddleware(e *executor, req Request, res Response, terminate TerminateFunc) {
 	if req.TX().IsMulti() && !slices.Contains([]string{MULTI, DISCARD, EXEC}, req.Specs().String()) {
-		res.Set(req.TX().Enqueue(req), nil)
-		return nil
+		res.Set(req.TX().Enqueue(req), nil, false)
+		terminate()
+		return
 	}
-	return nil
 }

@@ -51,7 +51,7 @@ type Server interface {
 	PropagateToReplicaGroup(cmd string, args ...Token)
 	IsPartOfReplicaGroup(id string) bool
 	RemoveFromReplicaGroup(id string)
-	StartMaster(aof AOF) error
+	StartMaster() error
 	StartReplica(flags *Flags, d *deps)
 	Dir() string
 	Shutdown()
@@ -66,8 +66,7 @@ type server struct {
 	replicaUpdatesSubscriptions map[string]chan uint
 	hub                         Hub
 	replicas                    map[string]io.Writer
-	// auth                        map[string]Auth
-	dir string
+	dir                         string
 }
 
 func New(hub Hub, flgs *Flags) Server {
@@ -107,7 +106,7 @@ func New(hub Hub, flgs *Flags) Server {
 	return srv
 }
 
-func (srv *server) StartMaster(aof AOF) error {
+func (srv *server) StartMaster() error {
 	l, err := net.Listen("tcp", fmt.Sprintf("%v:%v", srv.host, srv.port))
 	if err != nil {
 		return fmt.Errorf("failed to bind to port %v", srv.port)
@@ -117,7 +116,7 @@ func (srv *server) StartMaster(aof AOF) error {
 		if err != nil {
 			return fmt.Errorf("error accepting connection: %v", err.Error())
 		}
-		go handle(NewClient(conn, srv.hub.RequestChannel(), DefaultAuthContext().user, false), aof)
+		go handle(NewClient(conn, srv.hub.RequestChannel(), DefaultAuthContext().user, false))
 	}
 }
 
@@ -174,10 +173,6 @@ func (srv *server) IsPartOfReplicaGroup(id string) bool {
 func (srv *server) Hub() Hub {
 	return srv.hub
 }
-
-// func (srv *server) Auth(user string) Auth {
-// 	return srv.auth[user]
-// }
 
 type ReplicaUpdateSubscription struct {
 	C      <-chan uint

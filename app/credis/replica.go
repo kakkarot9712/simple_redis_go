@@ -2,14 +2,13 @@ package credis
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net"
 	"os"
 	"slices"
 	"strings"
+	"time"
 )
 
 type replicaConfig struct {
@@ -103,71 +102,97 @@ func (srv *server) StartReplica(flags *Flags, d *deps) {
 	}
 	redisClient.ProcessRDB()
 	exec := NewExec(d)
+	exec.Use(ExecutorMiddleware)
 	// exec.Use(RestrictUnsupportedCommandMiddleware)
 	go handleRepl(redisClient, exec, d.ReplicaManager)
 }
 
 func handleRepl(client Client, exec Executor, repl ReplicaManager) {
 	clientCtx, clientCancel := context.WithCancel(context.Background())
-	for {
-		token, bytesProcessed, err := client.TryParse()
-		if err != nil {
-			// Actual Error
-			if errors.Is(err, io.EOF) {
-				// Connection is closed
+	timer := time.NewTicker(time.Second)
+	type masterData struct {
+		bytes int
+		token Token
+	}
+	masterResp := make(chan masterData)
+	go func() {
+		for {
+			token, bytesProcessed, err := client.TryParse()
+			if err != nil {
+				// Actual Error
+				close(masterResp)
 				break
 			}
-		}
-		tokenType := token.Type
-		if tokenType != ARRAY {
-			// Ignore that as of now
-			continue
-		}
-		tkns := token.Literal.([]Token)
-		if len(tkns) == 0 {
-			continue
-		}
-		// var artifacts any
-		reqCtx, cancel := context.WithCancel(clientCtx)
-		sendAndCancel := func(res Response) {
-			client.Write(res.Data())
-			// artifacts = res.Artifacts()
-			cancel()
-		}
-		buffLen := uint(math.Min(float64(2), float64(len(tkns))))
-		argsIndex, cmd, err := ParseCmd(tkns[:buffLen]...)
-		var args []Token
-		if len(tkns) > argsIndex {
-			args = tkns[argsIndex:]
-		}
-		tx := NewTX()
-		req := NewRequest(
-			reqCtx,
-			client.AuthCtx(),
-			tx,
-			client.Id(),
-			nil,
-		)
-		specs, err := ParseSpec(cmd, args...)
-		req.SetSpecs(specs)
-		if err != nil {
-			sendAndCancel(&response{
-				data: NewEncoder().SimpleError(err.Error()),
-			})
-			continue
-		}
-		if len(tkns) > 1 {
-			args = append(args, tkns[1:]...)
-		}
-		req.SetArgs(args...)
-		if Writeable(cmd) {
-			res := exec.Exec(req)
-			if cmd == REPLCONF {
-				sendAndCancel(res)
+			masterResp <- masterData{
+				bytes: bytesProcessed,
+				token: token,
 			}
 		}
-		repl.AppendProcessed(bytesProcessed)
-		cancel()
+	}()
+l:
+	for {
+		select {
+		case <-timer.C:
+			// client.WriteToMaster(REPLCONF,
+			// 	NewToken(BULK_STRING, "ACK"),
+			// 	NewToken(BULK_STRING, fmt.Sprintf("%v", repl.Processed())),
+			// )
+		case md, ok := <-masterResp:
+			if !ok {
+				break l
+			}
+			token := md.token
+			tokenType := token.Type
+			if tokenType != ARRAY {
+				// Ignore that as of now
+				continue
+			}
+			tkns := token.Literal.([]Token)
+			if len(tkns) == 0 {
+				continue
+			}
+			// var artifacts any
+			reqCtx, cancel := context.WithCancel(clientCtx)
+			sendAndCancel := func(res Response) {
+				client.Write(res.Data())
+				// artifacts = res.Artifacts()
+				cancel()
+			}
+			buffLen := uint(math.Min(float64(2), float64(len(tkns))))
+			argsIndex, cmd, err := ParseCmd(tkns[:buffLen]...)
+			var args []Token
+			if len(tkns) > argsIndex {
+				args = tkns[argsIndex:]
+			}
+			tx := NewTX()
+			req := NewRequest(
+				reqCtx,
+				client.AuthCtx(),
+				tx,
+				client,
+				nil,
+			)
+			specs, err := ParseSpec(cmd, args...)
+			req.SetSpecs(specs)
+			if err != nil {
+				sendAndCancel(&response{
+					data: NewEncoder().SimpleError(err.Error()),
+				})
+				continue
+			}
+			if len(tkns) > 1 {
+				args = append(args, tkns[1:]...)
+			}
+			req.SetArgs(args...)
+			if Writeable(cmd) {
+				res := exec.Exec(req)
+				if cmd == REPLCONF {
+					sendAndCancel(res)
+				}
+			}
+			repl.AppendProcessed(md.bytes)
+			cancel()
+		}
 	}
 	clientCancel()
 }

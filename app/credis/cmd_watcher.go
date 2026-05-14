@@ -92,9 +92,9 @@ func (w *cmdWatcher) IsModified(clientId string) bool {
 	return w.modifiedClients[clientId]
 }
 
-func ClientWatchableCheckerMiddleware(e *executor, req Request, res Response) error {
+func WatchCommandGuardMiddleware(e *executor, req Request, res Response, terminate TerminateFunc) {
 	if req.Specs().String() == WATCH && req.TX().IsMulti() {
-		return &ErrWatchInsideMulti{}
+		terminate(&ErrWatchInsideMulti{})
+		return
 	}
-	return nil
 }

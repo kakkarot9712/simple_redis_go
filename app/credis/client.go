@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,13 +32,14 @@ func (r *response) DoNotPropagate() bool {
 	return r.doNotPropagate
 }
 
-func (r *response) Set(data []byte, artifacts any) {
+func (r *response) Set(data []byte, artifacts any, doNotPropagate bool) {
 	r.data = data
 	r.artifacts = artifacts
+	r.doNotPropagate = doNotPropagate
 }
 
 type Response interface {
-	Set(data []byte, artifacts any)
+	Set(data []byte, artifacts any, doNotPropagate bool)
 	Data() []byte
 	DoNotPropagate() bool
 	Artifacts() any
@@ -46,7 +47,7 @@ type Response interface {
 
 type request struct {
 	id        string
-	clientId  string
+	client    Client
 	authCtx   *authContext
 	txs       *TX
 	ctx       context.Context
@@ -81,7 +82,11 @@ func (r *request) Receive() chan<- Response {
 }
 
 func (r *request) ClientId() string {
-	return r.clientId
+	return r.client.Id()
+}
+
+func (r *request) Client() Client {
+	return r.client
 }
 
 func (r *request) AuthCtx() *authContext {
@@ -99,6 +104,7 @@ type Spec interface {
 type Request interface {
 	Ctx() context.Context
 	ClientId() string
+	Client() Client
 	Args() []Token
 	Specs() Specs
 	SetSpecs(Specs)
@@ -112,7 +118,7 @@ func NewRequest(
 	ctx context.Context,
 	authCtx *authContext,
 	txs *TX,
-	clientId string,
+	client Client,
 	receiver chan<- Response,
 ) Request {
 	return &request{
@@ -121,7 +127,7 @@ func NewRequest(
 		authCtx:   authCtx,
 		txs:       txs,
 		ctx:       ctx,
-		clientId:  clientId,
+		client:    client,
 		receiver:  receiver,
 	}
 }
@@ -130,6 +136,8 @@ type client struct {
 	mu sync.RWMutex
 	id string
 	net.Conn
+	ctx       context.Context
+	cancel    context.CancelFunc
 	parser    Parser
 	authCtx   *authContext
 	send      chan<- Request
@@ -137,10 +145,6 @@ type client struct {
 	tx        *TX
 	exec      Executor
 	processed *atomic.Uint64
-	watchList map[string]struct {
-		Watching bool
-		Dirty    bool
-	}
 }
 
 type Client interface {
@@ -154,6 +158,8 @@ type Client interface {
 	GetTX() *TX
 	Executor() Executor
 	AuthCtx() *authContext
+	Ctx() context.Context
+	Cancel() context.CancelFunc
 }
 
 func NewClient(
@@ -162,7 +168,10 @@ func NewClient(
 	user string,
 	isAuthenticated bool,
 ) Client {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &client{
+		ctx:     ctx,
+		cancel:  cancel,
 		id:      GenerateString(6),
 		parser:  NewParser(bufio.NewReader(conn)),
 		Conn:    conn,
@@ -170,32 +179,12 @@ func NewClient(
 		send:    send,
 		receive: make(chan Response),
 		// subCancelMapping: make(map[string]func()),
-		watchList: make(map[string]struct {
-			Watching bool
-			Dirty    bool
-		}),
 		authCtx: NewAuthContext(),
 	}
 }
 
 func (c *client) AuthCtx() *authContext {
 	return c.authCtx
-}
-
-func (c *client) IsWatching(cmd string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.watchList[cmd].Watching
-}
-
-func (c *client) MakeDirty(cmd string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.watchList[cmd].Watching {
-		d := c.watchList[cmd]
-		d.Dirty = true
-		c.watchList[cmd] = d
-	}
 }
 
 func (c *client) WriteToMaster(cmd string, args ...Token) error {
@@ -249,16 +238,26 @@ func (c *client) Executor() Executor {
 	return c.exec
 }
 
-func handle(client Client, aof AOF) {
-	clientCtx, clientCancel := context.WithCancel(context.Background())
+func (c *client) Ctx() context.Context {
+	return c.ctx
+}
+
+func (c *client) Cancel() context.CancelFunc {
+	return c.cancel
+}
+
+func handle(client Client) {
+l:
 	for {
 		rawReq, _, err := client.TryParse()
 		if err != nil {
 			// Actual Error
 			if errors.Is(err, io.EOF) {
 				// Connection is closed
-				break
+			} else {
+				fmt.Printf("Client %v: Something went wrong! :: %v\n", client.Id(), err.Error())
 			}
+			break l
 		}
 		tokenType := rawReq.Type
 
@@ -266,15 +265,20 @@ func handle(client Client, aof AOF) {
 			// Ignore that as of now
 			continue
 		}
-		tkns := rawReq.Literal.([]Token)
+		var tkns []Token
+		if t, ok := rawReq.Literal.([]Token); !ok {
+			continue
+		} else {
+			tkns = t
+		}
 		if len(tkns) == 0 {
 			continue
 		}
-		var artifacts any
-		reqCtx, cancel := context.WithCancel(clientCtx)
+		// var artifacts any
+		reqCtx, cancel := context.WithCancel(client.Ctx())
 		sendAndCancel := func(res Response) {
 			client.Write(res.Data())
-			artifacts = res.Artifacts()
+			// artifacts = res.Artifacts()
 			cancel()
 		}
 
@@ -285,7 +289,7 @@ func handle(client Client, aof AOF) {
 		if len(tkns) > argsIndex {
 			args = tkns[argsIndex:]
 		}
-		req := NewRequest(reqCtx, client.AuthCtx(), client.GetTX(), client.Id(), client.Receive())
+		req := NewRequest(reqCtx, client.AuthCtx(), client.GetTX(), client, client.Receive())
 		specs, err := ParseSpec(cmd, args...)
 		req.SetSpecs(specs)
 		req.SetArgs(args...)
@@ -317,35 +321,19 @@ func handle(client Client, aof AOF) {
 		} else {
 			client.Send() <- req
 			res := <-client.Receive()
-			genericSpec := GetGenericSpec(cmd)
-			if genericSpec.Write {
-				rawCmd := strings.ToUpper(strings.Replace(cmd, "_", " ", 1))
-				tkns := []Token{NewToken(BULK_STRING, rawCmd)}
-				tkns = append(tkns, args...)
-
-				if aof.Freq() == ALAWYS {
-					aof.WriteAndFlushToAOF(NewEncoder().Array(tkns...))
-				} else {
-					aof.WriteToAOF(NewEncoder().Array(tkns...))
-				}
-			}
 			sendAndCancel(res)
 		}
 
-		// Do other tasks below using artifacts, response has been sent from below
-		if artifacts != nil {
-			switch typedArtifact := artifacts.(type) {
-			case *Sub:
-				go ListenForMsgs(clientCtx, typedArtifact, client)
-
-			case Repl:
-				for data := range typedArtifact.C {
-					client.Write(data)
-				}
-				client.Close()
-			}
-		}
+		// Do other tasks below using artifacts, response has been sent already starting from below
+		// if artifacts != nil {
+		// 	switch typedArtifact := artifacts.(type) {
+		// 	case Repl:
+		// 		<-typedArtifact.C
+		// 		break l
+		// 	}
+		// }
 	}
-	clientCancel()
+	client.Cancel()
+	client.Close()
 	// client.TerminateWatcher()
 }

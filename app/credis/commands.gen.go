@@ -485,6 +485,7 @@ type REPLCONFSpecs struct {
 	ListeningPort *string
 	Capability    *string
 	GetAck        *string
+	Ack           *int64
 }
 
 func (s *REPLCONFSpecs) String() string {

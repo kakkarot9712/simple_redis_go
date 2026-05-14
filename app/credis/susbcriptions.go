@@ -143,13 +143,22 @@ l:
 	}
 }
 
-func SubscriptionMiddleware(e *executor, req Request, res Response) error {
+func SubscriptionCommandGuardMiddleware(e *executor, req Request, res Response, terminate TerminateFunc) {
 	isAllowed := e.deps.SubManager.IsAllowed(
 		req.Specs().String(),
 		req.ClientId(),
 	)
 	if !isAllowed {
-		return &NoOtherCommandsInSubscribeContext{cmd: req.Specs().String()}
+		terminate(&NoOtherCommandsInSubscribeContext{cmd: req.Specs().String()})
+		return
 	}
-	return nil
+}
+
+func SubListenerMiddleware(e *executor, req Request, res Response, terminate TerminateFunc) {
+	if res.Artifacts() == nil {
+		return
+	}
+	if sub, ok := res.Artifacts().(*Sub); ok {
+		go ListenForMsgs(req.Client().Ctx(), sub, req.Client())
+	}
 }

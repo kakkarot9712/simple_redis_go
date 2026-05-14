@@ -130,6 +130,7 @@ func (aof *aofConfig) Initialize(deps *deps) error {
 			log.Fatalf("ERR restoring from AOF: %v", err)
 		}
 		e := NewExec(deps)
+		e.Use(ExecutorMiddleware)
 		p := NewParser(bufio.NewReader(bytes.NewReader(buff)))
 		txs := NewTX()
 		for {
@@ -160,7 +161,7 @@ func (aof *aofConfig) Initialize(deps *deps) error {
 			req := NewRequest(
 				context.Background(),
 				DefaultAuthContext(), txs,
-				"temp",
+				NewClient(nil, nil, "default", true),
 				nil,
 			)
 			specs, err := ParseSpec(cmd, args...)
@@ -213,5 +214,20 @@ func (aof *aofConfig) FlushToAOF() error {
 func (aof *aofConfig) Close() {
 	if aof.incrFile != nil {
 		aof.incrFile.Close()
+	}
+}
+
+func AOFWriterMiddleware(e *executor, req Request, res Response, terminate TerminateFunc) {
+	genericSpec := GetGenericSpec(req.Specs().String())
+	if genericSpec.Write {
+		rawCmd := strings.ToUpper(strings.Replace(req.Specs().String(), "_", " ", 1))
+		tkns := []Token{NewToken(BULK_STRING, rawCmd)}
+		tkns = append(tkns, req.Args()...)
+
+		if e.deps.AOF.Freq() == ALAWYS {
+			e.deps.AOF.WriteAndFlushToAOF(NewEncoder().Array(tkns...))
+		} else {
+			e.deps.AOF.WriteToAOF(NewEncoder().Array(tkns...))
+		}
 	}
 }

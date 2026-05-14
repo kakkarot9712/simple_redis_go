@@ -27,9 +27,15 @@ func main() {
 
 	// Setup middlewares
 	exec.Use(credis.AuthMiddleware)
-	exec.Use(credis.SubscriptionMiddleware)
-	exec.Use(credis.ClientWatchableCheckerMiddleware)
+	exec.Use(credis.ReplicaCommandGuard)
+	exec.Use(credis.SubscriptionCommandGuardMiddleware)
+	exec.Use(credis.WatchCommandGuardMiddleware)
 	exec.Use(credis.TransactionMiddleware)
+
+	exec.Use(credis.ExecutorMiddleware)
+
+	exec.Use(credis.AOFWriterMiddleware)
+	exec.Use(credis.SubListenerMiddleware)
 
 	go h.Start(exec)
 	c := make(chan os.Signal, 1)
@@ -42,7 +48,7 @@ func main() {
 		srv.Shutdown()
 		os.Exit(0)
 	}()
-	err = srv.StartMaster(deps.AOF)
+	err = srv.StartMaster()
 	// defer srv.Shutdown()
 	if err != nil {
 		fmt.Println(err)

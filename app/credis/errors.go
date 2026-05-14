@@ -97,3 +97,35 @@ type ErrCommandNotPropagateble struct {
 func (e *ErrCommandNotPropagateble) Error() string {
 	return fmt.Sprintf("ERR %s can not be propagated.", e.cmd)
 }
+
+type ErrEncodingFailed struct{}
+
+func (e *ErrEncodingFailed) Error() string {
+	return "ERR encoding failed"
+}
+
+type ErrUnsupportedDataType struct {
+	dataType any
+	cmd      string
+}
+
+func (e *ErrUnsupportedDataType) Error() string {
+	return fmt.Sprintf("ERR unsupported data as value for %v: %v", e.cmd, e.dataType)
+}
+
+type ErrInvalidCoords struct {
+	Lat float64
+	Lng float64
+}
+
+func (e *ErrInvalidCoords) Error() string {
+	return fmt.Sprintf("ERR invalid longitude,latitude pair %v,%v", e.Lng, e.Lat)
+}
+
+type ErrNotImplimented struct {
+	cmd string
+}
+
+func (e *ErrNotImplimented) Error() string {
+	return fmt.Sprintf("ERR %v: Not Implemented", e.cmd)
+}

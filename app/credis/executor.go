@@ -1,10 +1,12 @@
 package credis
 
 import (
+	"strings"
 	"time"
 )
 
-type Middleware func(e *executor, req Request, res Response) error
+type Middleware func(e *executor, req Request, res Response, terminate TerminateFunc)
+type TerminateFunc func(e ...error)
 
 type BLPOPHold struct {
 	req     Request
@@ -20,7 +22,7 @@ type Executor interface {
 }
 
 type Exec interface {
-	Execute(e *executor, req Request) Response
+	Execute(e *executor, req Request, res Response) error
 }
 
 // Executor must remain stateless to allow concurrent usage
@@ -41,22 +43,30 @@ func (e *executor) Use(m Middleware) {
 
 func (e *executor) Exec(req Request) Response {
 	// e.processed = cfg.processedBytes
-	if vp, ok := req.Specs().(Exec); ok {
-		for _, m := range e.middlewares {
-			var res response
-			err := m(e, req, &res)
-			if err != nil {
-				return &response{
-					data: NewEncoder().SimpleError(err.Error()),
-				}
-			} else if len(res.data) > 0 {
-				return &res
+	var res response
+	for _, m := range e.middlewares {
+		var terminate bool
+		var errors []error
+		terminateFunc := func(errs ...error) {
+			terminate = true
+			errors = append(errors, errs...)
+		}
+		terminate = false
+		m(e, req, &res, terminateFunc)
+		if len(errors) > 0 {
+			var errStr strings.Builder
+			for _, e := range errors {
+				errStr.Write([]byte(e.Error()))
+			}
+			return &response{
+				data: NewEncoder().SimpleError(errStr.String()),
 			}
 		}
-		return vp.Execute(e, req)
-	} else {
-		return notImplemented(req.Specs().String())
+		if terminate {
+			return &res
+		}
 	}
+	return &res
 }
 
 func (e *executor) processHold(hold *BLPOPHold) (concluded bool, resData []byte) {
@@ -81,4 +91,15 @@ func (e *executor) processHold(hold *BLPOPHold) (concluded bool, resData []byte)
 		resData = NewEncoder().Array(tokens...)
 	}
 	return
+}
+
+func ExecutorMiddleware(e *executor, req Request, res Response, terminate TerminateFunc) {
+	if vp, ok := req.Specs().(Exec); ok {
+		err := vp.Execute(e, req, res)
+		if err != nil {
+			terminate(err)
+		}
+		return
+	}
+	terminate(&ErrNotImplimented{})
 }

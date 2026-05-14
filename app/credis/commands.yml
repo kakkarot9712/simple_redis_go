@@ -96,6 +96,10 @@ commands:
           afterField: getack
           optional: true
           type: string
+        - name: ack
+          afterField: ack
+          optional: true
+          type: int
 
   - name: PSYNC
     autoGenerateScalerParser: true
