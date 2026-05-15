@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 )
 
@@ -42,4 +44,31 @@ func FlipCoin(bias float32) bool {
 	lose := bias * 100
 	flipped := rand.Intn(101)
 	return flipped > int(lose)
+}
+
+func GetTsAndSeq(id string) (int64, *int64, error) {
+	ids := strings.Split(id, "-")
+	var ts int64
+	var seq *int64
+	if len(ids) == 2 {
+		for index, id := range ids {
+			if index == 1 && id == "*" {
+				continue
+			}
+			if val, err := strconv.ParseInt(id, 10, 64); err != nil {
+				return 0, nil, fmt.Errorf("invalid stream id for command XADD")
+			} else {
+				if index == 0 {
+					ts = val
+				} else {
+					seq = &val
+				}
+			}
+		}
+	} else if val, err := strconv.ParseInt(id, 10, 64); err != nil {
+		return 0, nil, err
+	} else {
+		ts = val
+	}
+	return ts, seq, nil
 }

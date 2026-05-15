@@ -10,7 +10,7 @@ This project is a simplified Redis clone implemented in Go, created as part of t
 - Full Replication support with command propagation, acknowledgement tracking, and replica management.
 - List support with `RPUSH`, `LPUSH`, `LRANGE`, `LLEN`, `LPOP` and `BLPOP` commands.
 - Sorted sets support with `ZADD`, `ZRANK`, `ZRANGE`, `ZCARD`, `ZSCORE` and `ZREM` commands.
-- Streams support with `TYPE` and `XADD` commands.
+- Streams support with `TYPE`, `XADD`, `XRANGE`, and `XREAD` commands.
 - Transaction support with `MULTI`, `INCR`, `EXEC`, `DISCARD`, `WATCH` and `UNWATCH` commands.
 - Pub/Sub support with `SUBSCRIBE`, `UNSUBSCRIBE` and `PUBLISH` commands.
 - Basic ACL support with `AUTH`, `ACL WHOAMI`, `ACL GETUSER` and `ACL SETUSER` commands.
@@ -97,37 +97,38 @@ The following Redis commands are implemented in this project:
 14. `EXEC`: Executes all queued commands and returns results as an array
 15. `DISCARD`: Discards a previously initialized transaction (with `MULTI`)
 16. `XADD`: Append an entry to a stream
-17. `RPUSH`: Append one or more values to a list
-18. `LPUSH`: Prepend one or more values to a list
-19. `LRANGE`: Get a range of elements from a list
-20. `LLEN`: Get the length of a list
-21. `LPOP`: Remove and return element(s) from the head of a list
-22. `BLPOP`: Blocking pop from the head of a list
-23. `SUBSCRIBE`: Subscribe to one or more channels
-24. `UNSUBSCRIBE`: Unsubscribe from one or more channels
-25. `PUBLISH`: Publish a message to a channel
-26. `AUTH`: Authenticate with a username and password
-27. `ACL WHOAMI`: Return the username of the current connection
-28. `ACL GETUSER`: Get flags and passwords for a user
-29. `ACL SETUSER`: Create or modify a user (supports `>password` rule to set password)
-30. `COMMAND`: Get information about Redis commands
-31. `ZADD`: Add one or more members to a sorted set
-32. `ZRANK`: Get the rank of a member in a sorted set
-33. `ZRANGE`: Get a range of members from a sorted set
-34. `ZCARD`: Get the cardinality (number of members) of a sorted set
-35. `ZSCORE`: Get the score of a member in a sorted set
-36. `ZREM`: Remove one or more members from a sorted set
-37. `WATCH`: Watch one or more keys for transaction
-38. `UNWATCH`: Unwatch all keys
-39. `GEOADD`: Add one or more locations to a geo key
-40. `GEOPOS`: Get the positions of one or more locations
-41. `GEODIST`: Get the distance between two locations
-42. `GEOSEARCH`: Search for locations within a radius
+17. `XRANGE`: Retrieve a range of entries from a stream
+18. `XREAD`: Read from one or more streams with optional blocking
+19. `RPUSH`: Append one or more values to a list
+20. `LPUSH`: Prepend one or more values to a list
+21. `LRANGE`: Get a range of elements from a list
+22. `LLEN`: Get the length of a list
+23. `LPOP`: Remove and return element(s) from the head of a list
+24. `BLPOP`: Blocking pop from the head of a list
+25. `SUBSCRIBE`: Subscribe to one or more channels
+26. `UNSUBSCRIBE`: Unsubscribe from one or more channels
+27. `PUBLISH`: Publish a message to a channel
+28. `AUTH`: Authenticate with a username and password
+29. `ACL WHOAMI`: Return the username of the current connection
+30. `ACL GETUSER`: Get flags and passwords for a user
+31. `ACL SETUSER`: Create or modify a user (supports `>password` rule to set password)
+32. `COMMAND`: Get information about Redis commands
+33. `ZADD`: Add one or more members to a sorted set
+34. `ZRANK`: Get the rank of a member in a sorted set
+35. `ZRANGE`: Get a range of members from a sorted set
+36. `ZCARD`: Get the cardinality (number of members) of a sorted set
+37. `ZSCORE`: Get the score of a member in a sorted set
+38. `ZREM`: Remove one or more members from a sorted set
+39. `WATCH`: Watch one or more keys for transaction
+40. `UNWATCH`: Unwatch all keys
+41. `GEOADD`: Add one or more locations to a geo key
+42. `GEOPOS`: Get the positions of one or more locations
+43. `GEODIST`: Get the distance between two locations
+44. `GEOSEARCH`: Search for locations within a radius
 
 ## Limitations
 
 - `HGET` and `HSET` commands are not supported.
-- `XRANGE` and `XREAD` stream commands are not supported; only `XADD` is available.
 - `PSUBSCRIBE` and `PUNSUBSCRIBE` (pattern-based pub/sub) are not supported.
 - RDB file loading is supported but `SAVE` command (writing RDB) is not.
 - Only RDB with single database and basic key-value storage is supported.

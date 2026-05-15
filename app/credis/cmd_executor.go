@@ -413,9 +413,98 @@ func (spec *XADDSpecs) Execute(e *executor, req Request, res Response) error {
 	}
 	generatedId, err := e.deps.StreamStore.CreateOrUpdateStream(spec.Key, spec.KVs, createStreamOpts...)
 	if err != nil {
-		return fmt.Errorf("ERR: %w", err)
+		return err
 	}
 	res.Set(NewEncoder().BulkString(&generatedId), nil, false)
+	return nil
+}
+
+func (spec *XRANGESpecs) Execute(e *executor, req Request, res Response) error {
+	found, streams, err := e.deps.StreamStore.GetStream(
+		spec.Key,
+		spec.StartId,
+		true,
+		spec.EndId,
+	)
+	if err != nil {
+		return err
+	}
+	if found == 0 {
+		res.Set(NewEncoder().NullArray(), nil, false)
+		return nil
+	}
+	res.Set(NewEncoder().Array(streams...), nil, false)
+	return nil
+}
+
+func (spec *XREADSpecs) Execute(e *executor, req Request, res Response) error {
+	if spec.BlockTime != nil {
+		type streamData struct {
+			streams []Token
+			err     error
+		}
+		streamChan := make(chan streamData)
+		go func() {
+			for {
+				// TODO: improve this
+				if spec.StreamIds[1] == "$" {
+					streamId := e.deps.StreamStore.GetLatestStreamId()
+					spec.StreamIds[1] = streamId
+				}
+				found, streams, err := e.deps.StreamStore.ReadSingleStream(spec.StreamIds, false)
+				if err != nil {
+					streamChan <- streamData{
+						err: err,
+					}
+					break
+				}
+				if found != 0 {
+					streamChan <- streamData{
+						streams: streams,
+					}
+					break
+				}
+			}
+		}()
+		if *spec.BlockTime == 0 {
+			data := <-streamChan
+			close(streamChan)
+			if data.err != nil {
+				return data.err
+			}
+			res.Set(NewEncoder().Array(data.streams...), nil, false)
+			return nil
+		} else {
+			timer := time.NewTicker(time.Duration(*spec.BlockTime) * time.Millisecond)
+			select {
+			case <-timer.C:
+				// Timeout
+				timer.Stop()
+				close(streamChan)
+				res.Set(NewEncoder().NullArray(), nil, false)
+				return nil
+			case data := <-streamChan:
+				// Data found!
+				timer.Stop()
+				close(streamChan)
+				if data.err != nil {
+					return data.err
+				}
+				res.Set(NewEncoder().Array(data.streams...), nil, false)
+				return nil
+			}
+		}
+	} else {
+		found, streams, err := e.deps.StreamStore.ReadSingleStream(spec.StreamIds, true)
+		if err != nil {
+			return err
+		}
+		if found == 0 {
+			res.Set(NewEncoder().NullArray(), nil, false)
+		} else {
+			res.Set(NewEncoder().Array(streams...), nil, false)
+		}
+	}
 	return nil
 }
 

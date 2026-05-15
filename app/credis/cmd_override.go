@@ -99,15 +99,34 @@ func (spec *XADDSpecs) Parse(args ...Token) error {
 			}
 		}
 	}
-	i := 2
+	i := 0
 	for i < len(args[2:])-1 {
-		key := args[i].Literal.(string)
-		value := args[i+1].Literal.(string)
+		key := args[i+2].Literal.(string)
+		value := args[i+3].Literal.(string)
 		spec.KVs = append(spec.KVs, KeyValue{
 			Key:   key,
 			Value: value,
 		})
 		i += 2
+	}
+	return nil
+}
+
+func (spec *XREADSpecs) Parse(args ...Token) error {
+	strVal0 := args[0].Literal.(string)
+	// s.ReadType = strVal0
+	streamIdsIndex := 1
+	if strVal0 == "BLOCK" || strVal0 == "block" {
+		if val, err := strconv.ParseUint(args[1].Literal.(string), 10, 64); err != nil {
+			return fmt.Errorf("ERR Invalid arg value for XREAD")
+		} else {
+			spec.BlockTime = &val
+		}
+		streamIdsIndex += 2
+	}
+	spec.StreamIds = make([]string, 0)
+	for _, el := range args[streamIdsIndex:] {
+		spec.StreamIds = append(spec.StreamIds, el.Literal.(string))
 	}
 	return nil
 }

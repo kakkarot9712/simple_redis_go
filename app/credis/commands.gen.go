@@ -27,6 +27,8 @@ const (
 	CONFIG      = "config"
 	KEYS        = "keys"
 	XADD        = "xadd"
+	XRANGE      = "xrange"
+	XREAD       = "xread"
 	TYPE        = "type"
 	RPUSH       = "rpush"
 	LRANGE      = "lrange"
@@ -147,6 +149,18 @@ var commandRegistry = map[string]GenericSpec{
 		MaxArgs:   -1,
 		Supported: true,
 		Write:     true,
+	},
+	XRANGE: {
+		MinArgs:   3,
+		MaxArgs:   3,
+		Supported: true,
+		Write:     false,
+	},
+	XREAD: {
+		MinArgs:   3,
+		MaxArgs:   -1,
+		Supported: true,
+		Write:     false,
 	},
 	TYPE: {
 		MinArgs:   1,
@@ -551,6 +565,37 @@ type XADDSpecs struct {
 
 func (s *XADDSpecs) String() string {
 	return XADD
+}
+
+type XRANGESpecs struct {
+	Key     string
+	StartId string
+	EndId   string
+}
+
+func (s *XRANGESpecs) String() string {
+	return XRANGE
+}
+func (s *XRANGESpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Key = strVal0
+
+	strVal1 := args[1].Literal.(string)
+	s.StartId = strVal1
+
+	strVal2 := args[2].Literal.(string)
+	s.EndId = strVal2
+
+	return 3, nil
+}
+
+type XREADSpecs struct {
+	BlockTime *uint64 // Block time in milliseconds
+	StreamIds []string
+}
+
+func (s *XREADSpecs) String() string {
+	return XREAD
 }
 
 type TYPESpecs struct {
@@ -1102,6 +1147,10 @@ func ParseSpec(cmd string, args ...Token) (specs Specs, err error) {
 		specs = &KEYSSpecs{}
 	case XADD:
 		specs = &XADDSpecs{}
+	case XRANGE:
+		specs = &XRANGESpecs{}
+	case XREAD:
+		specs = &XREADSpecs{}
 	case TYPE:
 		specs = &TYPESpecs{}
 	case RPUSH:

@@ -147,6 +147,34 @@ commands:
           type: "*int64"
         - name: KVs
           type: "[]KeyValue"
+  
+  - name: XRANGE
+    autoGenerateScalerParser: true
+    args:
+      min: 3
+      max: 3
+      spec:
+        - name: key
+          type: string
+        - name: startId
+          type: string
+        - name: endId
+          type: string
+  
+  - name: XREAD
+    autoGenerateScalerParser: false
+    args:
+      min: 3
+      max: -1
+      spec:
+        - name: blockTime
+          type: uint64
+          afterField: BLOCK
+          optional: true
+          comment: "Block time in milliseconds"
+        - name: streamIds
+          type: "[]string"
+          afterField: STREAMS
 
   - name: TYPE
     autoGenerateScalerParser: true

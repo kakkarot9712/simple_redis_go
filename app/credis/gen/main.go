@@ -32,6 +32,7 @@ type SpecConfig struct {
 	Optional   bool   `yaml:"optional"`
 	Rest       bool   `yaml:"rest"`
 	AfterField string `yaml:"afterField"`
+	Comment    string `yaml:"comment"`
 }
 
 type ArgsConfig struct {

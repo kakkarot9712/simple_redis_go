@@ -86,7 +86,7 @@ func ParseCmd(tkns ...Token) (int, string, error) {
 {{ range .Commands }}
 type {{ .Name }}Specs struct {
 {{ range .Args.Spec }}
-	{{ toUpperFirst .Name }}  {{ goType . }}
+	{{ toUpperFirst .Name }}  {{ goType . }} {{- if ne .Comment "" -}} // {{ .Comment }} {{- end -}}
 {{- end -}}
 {{ if .Timestamp }}
 	CurrentTime time.Time
