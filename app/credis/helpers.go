@@ -72,3 +72,19 @@ func GetTsAndSeq(id string) (int64, *int64, error) {
 	}
 	return ts, seq, nil
 }
+
+func GetBit(b byte, msbLoc byte) byte {
+	var operator byte = 1 << 7
+	orig := b & (operator >> byte(msbLoc))
+	return orig >> (7 - byte(msbLoc))
+}
+
+func SetBit(b byte, msbLoc byte, flag byte) (byte, byte) {
+	var operator byte = 1 << 7
+	orig := GetBit(b, msbLoc)
+	var updatedByte byte
+	if orig != flag {
+		updatedByte = b ^ (operator >> msbLoc)
+	}
+	return updatedByte, orig
+}

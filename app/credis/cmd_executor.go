@@ -780,3 +780,42 @@ func (s *GEOSEARCHSpecs) Execute(e *executor, req Request, res Response) error {
 	res.Set(NewEncoder().Array(placesInRadius...), nil, false)
 	return nil
 }
+
+func (s *SETBITSpecs) Execute(e *executor, req Request, res Response) error {
+	orig, err := e.deps.BitmapStore.Set(s.Key, int(s.Offset), byte(s.Value))
+	if err != nil {
+		return err
+	}
+	res.Set(NewEncoder().Integer(int(orig)), nil, false)
+	return nil
+}
+
+func (s *GETBITSpecs) Execute(e *executor, req Request, res Response) error {
+	val, _ := e.deps.BitmapStore.Get(s.Key, int(s.Offset))
+	res.Set(NewEncoder().Integer(int(val)), nil, false)
+	return nil
+}
+
+func (s *STRLENSpecs) Execute(e *executor, req Request, res Response) error {
+	val := e.deps.BitmapStore.StrLen(s.Key)
+	res.Set(NewEncoder().Integer(int(val)), nil, false)
+	return nil
+}
+
+func (s *BITCOUNTSpecs) Execute(e *executor, req Request, res Response) error {
+	val := e.deps.BitmapStore.BitCount(s.Key, s.StartIndex, s.EndIndex)
+	res.Set(NewEncoder().Integer(int(val)), nil, false)
+	return nil
+}
+
+func (s *BITOP_ANDSpecs) Execute(e *executor, req Request, res Response) error {
+	val := e.deps.BitmapStore.OpAnd(s.Dest, s.Key1, s.Key2)
+	res.Set(NewEncoder().Integer(int(val)), nil, false)
+	return nil
+}
+
+func (s *BITOP_ORSpecs) Execute(e *executor, req Request, res Response) error {
+	val := e.deps.BitmapStore.OpOr(s.Dest, s.Key1, s.Key2)
+	res.Set(NewEncoder().Integer(int(val)), nil, false)
+	return nil
+}

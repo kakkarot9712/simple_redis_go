@@ -57,6 +57,12 @@ const (
 	GEOPOS      = "geopos"
 	GEODIST     = "geodist"
 	GEOSEARCH   = "geosearch"
+	SETBIT      = "setbit"
+	GETBIT      = "getbit"
+	STRLEN      = "strlen"
+	BITCOUNT    = "bitcount"
+	BITOP_AND   = "bitop_and"
+	BITOP_OR    = "bitop_or"
 )
 
 var commandRegistry = map[string]GenericSpec{
@@ -330,6 +336,42 @@ var commandRegistry = map[string]GenericSpec{
 		Supported: true,
 		Write:     false,
 	},
+	SETBIT: {
+		MinArgs:   3,
+		MaxArgs:   3,
+		Supported: true,
+		Write:     true,
+	},
+	GETBIT: {
+		MinArgs:   2,
+		MaxArgs:   2,
+		Supported: true,
+		Write:     false,
+	},
+	STRLEN: {
+		MinArgs:   1,
+		MaxArgs:   1,
+		Supported: true,
+		Write:     false,
+	},
+	BITCOUNT: {
+		MinArgs:   1,
+		MaxArgs:   3,
+		Supported: true,
+		Write:     false,
+	},
+	BITOP_AND: {
+		MinArgs:   3,
+		MaxArgs:   3,
+		Supported: true,
+		Write:     false,
+	},
+	BITOP_OR: {
+		MinArgs:   3,
+		MaxArgs:   3,
+		Supported: true,
+		Write:     false,
+	},
 }
 
 type FullParser interface {
@@ -377,7 +419,7 @@ func ParseCmd(tkns ...Token) (int, string, error) {
 	argsIndex := 1
 	var c string
 	c = strings.ToLower(tkns[0].Literal.(string))
-	if c == "acl" && len(tkns) >= 2 {
+	if (c == "acl" || c == "bitop") && len(tkns) >= 2 {
 		subcmd := strings.ToLower(tkns[1].Literal.(string))
 		c = c + "_" + subcmd
 		argsIndex = 2
@@ -1110,6 +1152,151 @@ func (s *GEOSEARCHSpecs) ParseScaler(args ...Token) (int, error) {
 	return 1, nil
 }
 
+type SETBITSpecs struct {
+	Key    string
+	Offset int64
+	Value  int64
+}
+
+func (s *SETBITSpecs) String() string {
+	return SETBIT
+}
+func (s *SETBITSpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Key = strVal0
+
+	if parsed, err := strconv.ParseInt(args[1].Literal.(string), 10, 64); err != nil {
+		return 0, err
+	} else {
+		intVal1 := parsed
+		s.Offset = intVal1
+	}
+
+	if parsed, err := strconv.ParseInt(args[2].Literal.(string), 10, 64); err != nil {
+		return 0, err
+	} else {
+		intVal2 := parsed
+		s.Value = intVal2
+	}
+
+	return 3, nil
+}
+
+type GETBITSpecs struct {
+	Key    string
+	Offset int64
+}
+
+func (s *GETBITSpecs) String() string {
+	return GETBIT
+}
+func (s *GETBITSpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Key = strVal0
+
+	if parsed, err := strconv.ParseInt(args[1].Literal.(string), 10, 64); err != nil {
+		return 0, err
+	} else {
+		intVal1 := parsed
+		s.Offset = intVal1
+	}
+
+	return 2, nil
+}
+
+type STRLENSpecs struct {
+	Key string
+}
+
+func (s *STRLENSpecs) String() string {
+	return STRLEN
+}
+func (s *STRLENSpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Key = strVal0
+
+	return 1, nil
+}
+
+type BITCOUNTSpecs struct {
+	Key        string
+	StartIndex *int64
+	EndIndex   *int64
+}
+
+func (s *BITCOUNTSpecs) String() string {
+	return BITCOUNT
+}
+func (s *BITCOUNTSpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Key = strVal0
+
+	if len(args) > 1 {
+		if parsed, err := strconv.ParseInt(args[1].Literal.(string), 10, 64); err != nil {
+			return 0, err
+		} else {
+			intVal1 := parsed
+			s.StartIndex = &intVal1
+		}
+
+	}
+	if len(args) > 2 {
+		if parsed, err := strconv.ParseInt(args[2].Literal.(string), 10, 64); err != nil {
+			return 0, err
+		} else {
+			intVal2 := parsed
+			s.EndIndex = &intVal2
+		}
+
+	}
+
+	return 3, nil
+}
+
+type BITOP_ANDSpecs struct {
+	Dest string
+	Key1 string
+	Key2 string
+}
+
+func (s *BITOP_ANDSpecs) String() string {
+	return BITOP_AND
+}
+func (s *BITOP_ANDSpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Dest = strVal0
+
+	strVal1 := args[1].Literal.(string)
+	s.Key1 = strVal1
+
+	strVal2 := args[2].Literal.(string)
+	s.Key2 = strVal2
+
+	return 3, nil
+}
+
+type BITOP_ORSpecs struct {
+	Dest string
+	Key1 string
+	Key2 string
+}
+
+func (s *BITOP_ORSpecs) String() string {
+	return BITOP_OR
+}
+func (s *BITOP_ORSpecs) ParseScaler(args ...Token) (int, error) {
+	strVal0 := args[0].Literal.(string)
+	s.Dest = strVal0
+
+	strVal1 := args[1].Literal.(string)
+	s.Key1 = strVal1
+
+	strVal2 := args[2].Literal.(string)
+	s.Key2 = strVal2
+
+	return 3, nil
+}
+
 func ParseSpec(cmd string, args ...Token) (specs Specs, err error) {
 	spec := GetGenericSpec(cmd)
 	if len(args) < spec.MinArgs || (spec.MaxArgs >= 0 && len(args) > spec.MaxArgs) {
@@ -1207,6 +1394,18 @@ func ParseSpec(cmd string, args ...Token) (specs Specs, err error) {
 		specs = &GEODISTSpecs{}
 	case GEOSEARCH:
 		specs = &GEOSEARCHSpecs{}
+	case SETBIT:
+		specs = &SETBITSpecs{}
+	case GETBIT:
+		specs = &GETBITSpecs{}
+	case STRLEN:
+		specs = &STRLENSpecs{}
+	case BITCOUNT:
+		specs = &BITCOUNTSpecs{}
+	case BITOP_AND:
+		specs = &BITOP_ANDSpecs{}
+	case BITOP_OR:
+		specs = &BITOP_ORSpecs{}
 	}
 	if specs == nil {
 		return

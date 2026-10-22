@@ -72,7 +72,7 @@ func ParseCmd(tkns ...Token) (int, string, error) {
 	argsIndex := 1
 	var c string
 	c = strings.ToLower(tkns[0].Literal.(string))
-	if c == "acl" && len(tkns) >= 2 {
+	if (c == "acl" || c == "bitop") && len(tkns) >= 2 {
 		subcmd := strings.ToLower(tkns[1].Literal.(string))
 		c = c + "_" + subcmd
 		argsIndex = 2

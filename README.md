@@ -11,6 +11,7 @@ This project is a simplified Redis clone implemented in Go, created as part of t
 - List support with `RPUSH`, `LPUSH`, `LRANGE`, `LLEN`, `LPOP` and `BLPOP` commands.
 - Sorted sets support with `ZADD`, `ZRANK`, `ZRANGE`, `ZCARD`, `ZSCORE` and `ZREM` commands.
 - Streams support with `TYPE`, `XADD`, `XRANGE`, and `XREAD` commands.
+- Bitmap support with `SETBIT`, `GETBIT`, `BITCOUNT`, `BITOP AND`, `BITOP OR`, and `STRLEN` commands.
 - Transaction support with `MULTI`, `INCR`, `EXEC`, `DISCARD`, `WATCH` and `UNWATCH` commands.
 - Pub/Sub support with `SUBSCRIBE`, `UNSUBSCRIBE` and `PUBLISH` commands.
 - Basic ACL support with `AUTH`, `ACL WHOAMI`, `ACL GETUSER` and `ACL SETUSER` commands.
@@ -125,10 +126,17 @@ The following Redis commands are implemented in this project:
 42. `GEOPOS`: Get the positions of one or more locations
 43. `GEODIST`: Get the distance between two locations
 44. `GEOSEARCH`: Search for locations within a radius
+45. `SETBIT`: Set the bit at an offset in a string value
+46. `GETBIT`: Get the bit at an offset in a string value
+47. `STRLEN`: Get the byte length of a string value
+48. `BITCOUNT`: Count set bits, optionally within a byte range
+49. `BITOP AND`: Store the bitwise AND of two source keys in a destination key
+50. `BITOP OR`: Store the bitwise OR of two source keys in a destination key
 
 ## Limitations
 
 - `HGET` and `HSET` commands are not supported.
+- Bitmap operations are limited to `BITOP AND` and `BITOP OR`, each with two source keys; other `BITOP` operations are not supported.
 - `PSUBSCRIBE` and `PUNSUBSCRIBE` (pattern-based pub/sub) are not supported.
 - RDB file loading is supported but `SAVE` command (writing RDB) is not.
 - Only RDB with single database and basic key-value storage is supported.

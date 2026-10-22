@@ -474,3 +474,78 @@ commands:
         - name: radius
           type: float
           afterField: BYRADIUS
+  
+  - name: SETBIT
+    autoGenerateScalerParser: true
+    write: true
+    args:
+      min: 3
+      max: 3
+      spec:
+        - name: key
+          type: string
+        - name: offset
+          type: int
+        - name: value
+          type: int
+
+  - name: GETBIT
+    autoGenerateScalerParser: true
+    args:
+      min: 2
+      max: 2
+      spec:
+        - name: key
+          type: string
+        - name: offset
+          type: int
+  
+  - name: STRLEN
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 1
+      spec:
+        - name: key
+          type: string
+
+  - name: BITCOUNT
+    autoGenerateScalerParser: true
+    args:
+      min: 1
+      max: 3
+      spec:
+        - name: key
+          type: string
+        - name: startIndex
+          type: int
+          optional: true
+        - name: endIndex
+          type: int
+          optional: true
+
+  - name: BITOP_AND
+    autoGenerateScalerParser: true
+    args: 
+      min: 3
+      max: 3
+      spec: 
+        - name: dest
+          type: string
+        - name: key1
+          type: string
+        - name: key2
+          type: string
+  
+  - name: BITOP_OR
+    autoGenerateScalerParser: true
+    args: 
+      min: 3
+      max: 3
+      spec: 
+        - name: dest
+          type: string
+        - name: key1
+          type: string
+        - name: key2
+          type: string

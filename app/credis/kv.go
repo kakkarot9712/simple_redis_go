@@ -22,6 +22,11 @@ type KVStore interface {
 	Set(key string, data Token, exp *time.Time)
 	Keys() iter.Seq[string]
 	Update(key string, data Token)
+	Inject(b BMS)
+}
+
+type BMS interface {
+	GetStr(key string) string
 }
 
 type store struct {
@@ -29,6 +34,7 @@ type store struct {
 	mu    sync.RWMutex
 	err   error
 	store map[string]Value
+	_bms  BMS
 }
 
 func NewStore() KVStore {
@@ -36,6 +42,10 @@ func NewStore() KVStore {
 		id:    GenerateString(6),
 		store: make(map[string]Value),
 	}
+}
+
+func (s *store) Inject(b BMS) {
+	s._bms = b
 }
 
 func (s *store) ID() string {
@@ -50,18 +60,21 @@ func (s *store) Get(key string, currentTime time.Time) Token {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	val := s.store[key]
-	if !val.exists {
-		return NewToken(BULK_STRING, "")
-	}
+	exists := val.exists
 	if val.exp != nil {
 		// Value with expiry
 		if currentTime.After(*val.exp) {
 			// value is expired
 			delete(s.store, key)
-			return NewToken(BULK_STRING, "")
+			exists = false
 		}
 	}
-	return s.store[key].data
+	if exists {
+		return s.store[key].data
+	}
+	bitmapVal := s._bms.GetStr(key)
+	return NewToken(BULK_STRING, bitmapVal)
+
 }
 
 func (s *store) Set(key string, data Token, exp *time.Time) {

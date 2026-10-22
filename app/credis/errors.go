@@ -129,3 +129,28 @@ type ErrNotImplimented struct {
 func (e *ErrNotImplimented) Error() string {
 	return fmt.Sprintf("ERR %v: Not Implemented", e.cmd)
 }
+
+type ErrInavlidFlagForBitmapOffset struct {
+	val byte
+}
+
+func (e *ErrInavlidFlagForBitmapOffset) Error() string {
+	return fmt.Sprintf("ERR invalid flag value %v for offset. supported flags are 0 and 1", e.val)
+}
+
+type ErrKeyNotExists struct {
+	key string
+}
+
+func (e *ErrKeyNotExists) Error() string {
+	return fmt.Sprintf("ERR provided key %v does not exists in bitmap", e.key)
+}
+
+type ErrBitmapOffsetOutofBound struct {
+	key    string
+	offset int
+}
+
+func (e *ErrBitmapOffsetOutofBound) Error() string {
+	return fmt.Sprintf("ERR offset %v out of bound for %v bitmap", e.offset, e.key)
+}

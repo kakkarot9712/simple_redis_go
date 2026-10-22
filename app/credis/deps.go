@@ -17,11 +17,15 @@ type deps struct {
 	SortedSet      SortedSet
 	Cfg            *Config
 	ReplicaManager ReplicaManager
+	BitmapStore    BitmapStore
 }
 
 func BuildDeps(flgs *Flags) *deps {
+	kvs := NewStore()
+	bms := NewBitmapStore(kvs)
+	kvs.Inject(bms)
 	d := &deps{
-		KVStore:        NewStore(),
+		KVStore:        kvs,
 		StreamStore:    NewStream(),
 		RDB:            NewRDB(flgs.Dir, flgs.RDB.FileName),
 		ListStore:      NewListStore[string](),
@@ -33,6 +37,7 @@ func BuildDeps(flgs *Flags) *deps {
 		AOF:            NewAOFConfig(flgs.Dir, flgs.AOF.Dir, flgs.AOF.FileName, flgs.AOF.SyncFrequency, flgs.AOF.Enabled),
 		SortedSet:      NewSortedSet(),
 		ReplicaManager: NewReplManager(),
+		BitmapStore:    bms,
 	}
 	if flgs.ReplicaOf != "" {
 		d.Info.set("replication", "role", "slave")
